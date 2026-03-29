@@ -31,8 +31,19 @@ export async function executeBash(args: {
   } catch (err: any) {
     const stderr = err.stderr?.toString() || "";
     const stdout = err.stdout?.toString() || "";
-    const combined = [stdout, stderr].filter(Boolean).join("\n");
     const exitCode = err.status ?? "unknown";
+
+    // Some constrained environments report shell execution as EPERM even when
+    // the command itself succeeded and returned exit code 0.
+    if (exitCode === 0) {
+      const successOutput = [stdout, stderr].filter(Boolean).join("\n");
+      const trimmed = successOutput.length > MAX_OUTPUT
+        ? successOutput.slice(0, MAX_OUTPUT) + `\n... (output truncated, ${successOutput.length} bytes total)`
+        : successOutput;
+      return { output: trimmed || "(no output)" };
+    }
+
+    const combined = [stdout, stderr].filter(Boolean).join("\n");
 
     const msg = combined.length > MAX_OUTPUT
       ? combined.slice(0, MAX_OUTPUT) + `\n... (output truncated)`

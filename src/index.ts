@@ -11,12 +11,23 @@ import { createClient } from "./client.js";
 import { setShowDiffs } from "./tools/edit-file.js";
 import type { GrokConfig, ServerTool, McpServer } from "./types.js";
 
-const VERSION = "0.3.0";
+const VERSION = readVersion();
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf-8").trim();
+}
+
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+    ) as { version?: string };
+    return pkg.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 const program = new Command()
@@ -27,7 +38,7 @@ const program = new Command()
 // ─── Default command ─────────────────────────────────────────────────────────
 
 program
-  .option("-m, --model <model>", "Model to use", MODELS.default)
+  .option("-m, --model <model>", "Model to use")
   .option("--fast", "grok-4-1-fast-reasoning")
   .option("--reasoning", "grok-4.20-reasoning (flagship)")
   .option("--non-reasoning", "grok-4.20-non-reasoning")
@@ -40,7 +51,7 @@ program
   .option("--no-diffs", "Hide file edit diffs")
   .option("--no-tools", "Chat only")
   .option("--no-citations", "Hide sources")
-  .option("--max-turns <n>", "Max agent turns", "50")
+  .option("--max-turns <n>", "Max agent turns")
   .option("--cwd <dir>", "Working directory", process.cwd())
   .option("-r, --resume <id>", "Resume session")
   .option("--fork <id>", "Fork a session (copy history, new session)")
@@ -65,12 +76,19 @@ program
   .option("--defer", "Use deferred completion (fire-and-forget)")
   .argument("[prompt...]", "Prompt (non-interactive)")
   .action(async (promptArgs: string[], opts: any) => {
-    let model = opts.model;
+    const hasCliValue = (name: string): boolean => {
+      const source = program.getOptionValueSource(name);
+      return source !== undefined && source !== "default";
+    };
+
+    let model: string | undefined = hasCliValue("model") ? opts.model : undefined;
     if (opts.fast) model = MODELS.fast;
     if (opts.reasoning) model = MODELS.reasoning;
     if (opts.nonReasoning) model = MODELS.nonReasoning;
     if (opts.code) model = MODELS.code;
     if (opts.research) model = MODELS.multiAgent;
+
+    const maxTurns = hasCliValue("maxTurns") ? parseInt(opts.maxTurns, 10) : undefined;
 
     const serverTools: ServerTool[] = [];
     if (opts.webSearch) serverTools.push("web_search");
@@ -93,15 +111,15 @@ program
       }
     }
 
-    let approvalPolicy: any = "always-approve";
-    if (opts.approve) approvalPolicy = "ask";
-    if (opts.denyWrites) approvalPolicy = "deny-writes";
+    let approvalPolicy: GrokConfig["approvalPolicy"] | undefined;
     if (opts.yolo) approvalPolicy = "always-approve";
+    else if (opts.denyWrites) approvalPolicy = "deny-writes";
+    else if (opts.approve) approvalPolicy = "ask";
 
     // Color control
-    if (opts.color === "never") {
+    if (hasCliValue("color") && opts.color === "never") {
       process.env.NO_COLOR = "1";
-    } else if (opts.color === "always") {
+    } else if (hasCliValue("color") && opts.color === "always") {
       process.env.FORCE_COLOR = "3";
     }
 
@@ -113,32 +131,38 @@ program
 
     const config: GrokConfig = getConfig({
       model,
-      showReasoning: opts.showReasoning,
+      showReasoning: hasCliValue("showReasoning") ? opts.showReasoning : undefined,
       showToolCalls: opts.tools !== false,
-      showUsage: opts.showUsage,
-      showCitations: opts.citations !== false,
-      showDiffs: opts.diffs !== false,
-      maxToolRounds: parseInt(opts.maxTurns, 10),
+      showUsage: hasCliValue("showUsage") ? opts.showUsage : undefined,
+      showCitations: hasCliValue("citations") ? opts.citations !== false : undefined,
+      showDiffs: hasCliValue("diffs")
+        ? opts.diffs !== false
+        : hasCliValue("showDiffs")
+          ? true
+          : undefined,
+      maxToolRounds: maxTurns,
       serverTools,
       mcpServers,
       useResponsesApi: opts.responsesApi || serverTools.length > 0 || mcpServers.length > 0,
       imageInputs: opts.image || [],
       fileAttachments: opts.attach || [],
-      jsonSchema: opts.jsonSchema || null,
+      jsonSchema: hasCliValue("jsonSchema") ? opts.jsonSchema || null : undefined,
       approvalPolicy,
-      notify: opts.notify || false,
-      hooks: {},
-      jsonOutput: opts.json || false,
-      ephemeral: opts.ephemeral || false,
-      outputFile: opts.output || null,
-      color: opts.color || "auto",
+      notify: hasCliValue("notify") ? opts.notify || false : undefined,
+      jsonOutput: hasCliValue("json") ? opts.json || false : undefined,
+      ephemeral: hasCliValue("ephemeral") ? opts.ephemeral || false : undefined,
+      outputFile: hasCliValue("output") ? opts.output || null : undefined,
+      color: hasCliValue("color") ? opts.color || "auto" : undefined,
     });
 
     setShowDiffs(config.showDiffs);
 
     // Session fork: copy history to new session
-    let sessionId = opts.resume || undefined;
-    if (opts.fork) {
+    let sessionId = config.ephemeral ? undefined : opts.resume || undefined;
+    if (config.ephemeral && (opts.resume || opts.fork) && !config.jsonOutput) {
+      console.error(chalk.dim("(ephemeral mode ignores --resume and --fork)"));
+    }
+    if (!config.ephemeral && opts.fork) {
       const mgr = new SessionManager(config.sessionDir);
       const source = mgr.loadSession(opts.fork);
       if (source) {
@@ -159,8 +183,8 @@ program
 
     const agentOpts = {
       verbose: opts.verbose,
-      showReasoning: opts.showReasoning,
-      maxTurns: parseInt(opts.maxTurns, 10),
+      showReasoning: config.showReasoning,
+      maxTurns: config.maxToolRounds,
       cwd: opts.cwd,
       sessionId,
       sessionName: opts.name,

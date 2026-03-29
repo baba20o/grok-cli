@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import chalk from "chalk";
 import { createClient } from "./client.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -216,6 +217,9 @@ async function runResponsesLoop(
   const client = createClient(config);
   const cwd = options.cwd;
   const totalUsage = createUsageStats();
+  let lastFingerprint: string | null = null;
+  const showOutput = !isJsonMode();
+  setMaxOutputTokens(config.maxOutputTokens);
 
   // Build tools array
   const tools: any[] = [];
@@ -258,6 +262,7 @@ async function runResponsesLoop(
 
   while (turn < options.maxTurns) {
     turn++;
+    emitTurnStarted(turn);
     if (options.verbose && turn > 1) {
       console.error(chalk.dim(`\n--- turn ${turn} ---`));
     }
@@ -285,11 +290,13 @@ async function runResponsesLoop(
 
       const response: any = await (client as any).responses.create(reqParams);
       currentResponseId = response.id;
+      if (response?.system_fingerprint) lastFingerprint = response.system_fingerprint;
 
       // Track usage
       const turnUsage = createUsageStats();
       extractUsageFromResponse(response, turnUsage);
       accumulateUsage(totalUsage, turnUsage);
+      emitTurnCompleted(turn, turnUsage);
 
       if (session) {
         session.manager.updateMeta(session.id, {
@@ -308,7 +315,7 @@ async function runResponsesLoop(
           for (const part of item.content) {
             if (part.type === "output_text" || part.type === "text") {
               textContent += part.text;
-              process.stdout.write(part.text);
+              if (showOutput) process.stdout.write(part.text);
             }
           }
           // Extract citations from message annotations
@@ -348,9 +355,11 @@ async function runResponsesLoop(
       }
 
       if (functionCalls.length === 0) {
-        if (textContent) process.stdout.write("\n");
+        if (showOutput && textContent) process.stdout.write("\n");
+        emitMessage(textContent);
         if (session) session.manager.appendMessage(session.id, "assistant", textContent);
         if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+        if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
         return textContent;
       }
 
@@ -363,10 +372,11 @@ async function runResponsesLoop(
         });
       }
 
-      if (textContent) process.stdout.write("\n");
+      if (showOutput && textContent) process.stdout.write("\n");
 
       const toolOutputs: any[] = [];
       for (const fc of functionCalls) {
+        emitToolCall(fc.name, fc.arguments, fc.call_id);
         if (config.showToolCalls) {
           console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
         }
@@ -383,6 +393,7 @@ async function runResponsesLoop(
           console.error(formatToolResult(result.output, result.error || false));
         }
         runHooks(config.hooks, { type: "post-tool", tool: fc.name, output: result.output, error: result.error, sessionId: session?.id });
+        emitToolResult(fc.call_id, result.output, result.error || false);
 
         if (session) {
           session.manager.appendToolExec(session.id, fc.name, fc.arguments, result.output, result.error || false);
@@ -406,6 +417,7 @@ async function runResponsesLoop(
         continue;
       }
       if (err?.status === 401) {
+        emitError("Authentication failed");
         console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
         process.exit(1);
       }
@@ -424,6 +436,7 @@ async function runResponsesLoop(
 
   console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
   if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+  if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
   return "";
 }
 
@@ -436,7 +449,7 @@ async function uploadFiles(config: GrokConfig, cwd: string): Promise<string[]> {
   const fileIds: string[] = [];
 
   for (const filePath of config.fileAttachments) {
-    const resolved = require("node:path").resolve(cwd, filePath);
+    const resolved = path.resolve(cwd, filePath);
     if (!fs.existsSync(resolved)) {
       console.error(chalk.yellow(`File not found, skipping: ${filePath}`));
       continue;
@@ -465,6 +478,7 @@ export async function runAgent(
 ): Promise<string> {
   const sessionMgr = new SessionManager(config.sessionDir);
   let sessionCtx: { manager: SessionManager; id: string } | null = null;
+  let runtimeSessionId = `ephemeral-${Date.now().toString(36)}`;
 
   if (!config.ephemeral) {
     // Create or resume session
@@ -479,67 +493,78 @@ export async function runAgent(
       sessionCtx = { manager: sessionMgr, id: meta.id };
       if (!isJsonMode()) console.error(chalk.dim(`Session: ${meta.id}`));
     }
+    runtimeSessionId = sessionCtx.id;
     sessionMgr.appendMessage(sessionCtx.id, "user", prompt);
-    emitSessionStarted(sessionCtx.id, config.model);
   } else {
+    if (options.sessionId && !isJsonMode()) {
+      console.error(chalk.dim("(ephemeral mode ignores --resume/--fork state)"));
+    }
     if (!isJsonMode()) console.error(chalk.dim("(ephemeral — no session saved)"));
   }
 
-  // Resolve image inputs
-  const imageUrls: string[] = [];
-  for (const img of config.imageInputs) {
-    try {
-      imageUrls.push(getImageDataUrl(img, options.cwd));
-    } catch (err: any) {
-      console.error(chalk.yellow(`Image error: ${err.message}`));
+  runHooks(config.hooks, { type: "session-start", sessionId: runtimeSessionId });
+  emitSessionStarted(runtimeSessionId, config.model);
+
+  try {
+    // Resolve image inputs
+    const imageUrls: string[] = [];
+    for (const img of config.imageInputs) {
+      try {
+        imageUrls.push(getImageDataUrl(img, options.cwd));
+      } catch (err: any) {
+        console.error(chalk.yellow(`Image error: ${err.message}`));
+      }
     }
-  }
 
-  // Upload files if any
-  const fileIds = await uploadFiles(config, options.cwd);
+    // Upload files if any
+    const fileIds = await uploadFiles(config, options.cwd);
 
-  // Determine API mode
-  const useResponses = config.useResponsesApi ||
-    config.mcpServers.length > 0 ||
-    config.serverTools.length > 0 ||
-    fileIds.length > 0;
+    // Determine API mode
+    const useResponses = config.useResponsesApi ||
+      config.mcpServers.length > 0 ||
+      config.serverTools.length > 0 ||
+      fileIds.length > 0;
 
-  if (useResponses) {
-    let prevResponseId: string | null = null;
-    if (options.sessionId) {
+    if (useResponses) {
+      let prevResponseId: string | null = null;
+      if (!config.ephemeral && options.sessionId) {
+        const loaded = sessionMgr.loadSession(options.sessionId);
+        if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
+      }
+      return await runResponsesLoop(config, prompt, options, sessionCtx, prevResponseId, imageUrls, fileIds);
+    }
+
+    // Default: chat.completions
+    let messages: ChatMessage[];
+
+    if (!config.ephemeral && options.sessionId) {
       const loaded = sessionMgr.loadSession(options.sessionId);
-      if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
-    }
-    return runResponsesLoop(config, prompt, options, sessionCtx, prevResponseId, imageUrls, fileIds);
-  }
-
-  // Default: chat.completions
-  let messages: ChatMessage[];
-
-  if (options.sessionId) {
-    const loaded = sessionMgr.loadSession(options.sessionId);
-    if (loaded) {
-      messages = loaded.messages;
-      console.error(chalk.dim(`Resumed session with ${loaded.messages.length} messages`));
+      if (loaded) {
+        messages = loaded.messages;
+        console.error(chalk.dim(`Resumed session with ${loaded.messages.length} messages`));
+      } else {
+        messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+      }
     } else {
       messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+      if (sessionCtx) {
+        sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+      }
     }
-  } else {
-    messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
-    if (sessionCtx) {
-      sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+
+    // Add image to user message if present
+    if (imageUrls.length > 0) {
+      const content = buildImageMessageContent(imageUrls[0], prompt);
+      messages.push({ role: "user", content } as any);
+    } else {
+      messages.push({ role: "user", content: prompt });
     }
-  }
 
-  // Add image to user message if present
-  if (imageUrls.length > 0) {
-    const content = buildImageMessageContent(imageUrls[0], prompt);
-    messages.push({ role: "user", content } as any);
-  } else {
-    messages.push({ role: "user", content: prompt });
+    return await runChatLoop(config, messages, options, sessionCtx);
+  } finally {
+    runHooks(config.hooks, { type: "session-end", sessionId: runtimeSessionId });
+    emitSessionCompleted(runtimeSessionId);
   }
-
-  return runChatLoop(config, messages, options, sessionCtx);
 }
 
 export async function runInteractive(config: GrokConfig, options: AgentOptions): Promise<void> {
@@ -551,10 +576,20 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
   });
 
   const sessionMgr = new SessionManager(config.sessionDir);
-  let sessionId: string;
+  let sessionId: string | null = null;
   let conversationMessages: ChatMessage[];
+  const showOutput = !isJsonMode();
+  const runtimeSessionId = config.ephemeral
+    ? `ephemeral-${Date.now().toString(36)}`
+    : undefined;
 
-  if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
+  if (config.ephemeral) {
+    if (options.sessionId && !isJsonMode()) {
+      console.error(chalk.dim("(ephemeral mode ignores --resume)"));
+    }
+    conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${config.model}) — ephemeral`));
+  } else if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
     const loaded = sessionMgr.loadSession(options.sessionId);
     if (loaded) {
       sessionId = loaded.meta.id;
@@ -583,119 +618,161 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
 
   console.error(chalk.dim('Commands: /session /sessions exit\n'));
 
-  const sessionCtx = { manager: sessionMgr, id: sessionId };
   const totalUsage = createUsageStats();
+  const hookSessionId = sessionId || runtimeSessionId || `ephemeral-${Date.now().toString(36)}`;
 
-  rl.prompt();
+  runHooks(config.hooks, { type: "session-start", sessionId: hookSessionId });
+  emitSessionStarted(hookSessionId, config.model);
 
-  for await (const line of rl) {
-    const input = line.trim();
-    if (!input) { rl.prompt(); continue; }
-    if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit") {
-      console.error(chalk.dim(`Session saved: ${sessionId}`));
-      if (config.showUsage && totalUsage.totalTokens > 0) {
-        console.error(formatUsage(config.model, totalUsage));
-      }
-      break;
-    }
-    if (input === "/session") {
-      console.error(chalk.dim(`ID: ${sessionId} | Messages: ${conversationMessages.length}`));
-      rl.prompt(); continue;
-    }
-    if (input === "/sessions") {
-      const sessions = sessionMgr.listSessions();
-      for (const s of sessions.slice(0, 10)) {
-        const cur = s.id === sessionId ? chalk.green(" ←") : "";
-        console.error(chalk.cyan(s.id) + chalk.dim(` ${s.name}`) + cur);
-      }
-      rl.prompt(); continue;
-    }
-    if (input === "/usage") {
-      console.error(formatUsage(config.model, totalUsage));
-      rl.prompt(); continue;
-    }
-
-    // Auto-name
-    const meta = sessionMgr.loadSession(sessionId);
-    if (meta && meta.meta.name === "Interactive session" && meta.meta.turns === 0) {
-      sessionMgr.updateMeta(sessionId, { name: sessionMgr.autoName(input) });
-    }
-
-    conversationMessages.push({ role: "user", content: input });
-    sessionMgr.appendMessage(sessionId, "user", input);
-
-    try {
-      let turn = 0;
-      while (turn < options.maxTurns) {
-        turn++;
-        const acc = createAccumulator();
-        const turnUsage = createUsageStats();
-        const client = createClient(config);
-
-        const stream = await client.chat.completions.create({
-          model: config.model,
-          messages: conversationMessages,
-          tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-          stream: true,
-          max_tokens: config.maxTokens,
-          temperature: 0,
-        } as any);
-
-        for await (const chunk of stream as any) {
-          processChunk(acc, chunk, {
-            showReasoning: options.showReasoning,
-            showOutput: true,
-          });
-          extractUsageFromChatChunk(chunk, turnUsage);
-        }
-
-        accumulateUsage(totalUsage, turnUsage);
-
-        if (acc.toolCalls.length === 0) {
-          if (acc.content) {
-            process.stdout.write("\n");
-            conversationMessages.push({ role: "assistant", content: acc.content });
-            sessionMgr.appendMessage(sessionId, "assistant", acc.content);
-            sessionMgr.updateMeta(sessionId, { turns: meta ? meta.meta.turns + turn : turn });
-          }
-          if (config.showUsage) console.error(formatUsage(config.model, turnUsage));
-          break;
-        }
-
-        const serialized: SerializedToolCall[] = acc.toolCalls
-          .filter(tc => tc.id && tc.function.name)
-          .map(tc => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
-
-        const aMsg: ChatMessage = {
-          role: "assistant", content: acc.content || null,
-          tool_calls: serialized.map(tc => ({
-            id: tc.id, type: "function" as const,
-            function: { name: tc.name, arguments: tc.arguments },
-          })),
-        };
-        conversationMessages.push(aMsg);
-        sessionMgr.appendMessage(sessionId, "assistant", acc.content || null, { toolCalls: serialized });
-
-        if (acc.content) process.stdout.write("\n");
-
-        for (const tc of serialized) {
-          if (config.showToolCalls) console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
-          const result = await executeTool(tc.name, tc.arguments, options.cwd);
-          if (config.showToolCalls) console.error(formatToolResult(result.output, result.error || false));
-          sessionMgr.appendToolExec(sessionId, tc.name, tc.arguments, result.output, result.error || false);
-          sessionMgr.appendMessage(sessionId, "tool", result.output, { toolCallId: tc.id });
-          conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
-        }
-      }
-    } catch (err: any) {
-      console.error(chalk.red(`Error: ${err.message}`));
-    }
-
-    console.error("");
+  try {
     rl.prompt();
-  }
 
-  rl.close();
+    for await (const line of rl) {
+      const input = line.trim();
+      if (!input) { rl.prompt(); continue; }
+      if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit") {
+        if (sessionId) console.error(chalk.dim(`Session saved: ${sessionId}`));
+        else console.error(chalk.dim("Session ended (ephemeral)"));
+        if (config.showUsage && totalUsage.totalTokens > 0) {
+          console.error(formatUsage(config.model, totalUsage));
+        }
+        break;
+      }
+      if (input === "/session") {
+        if (sessionId) console.error(chalk.dim(`ID: ${sessionId} | Messages: ${conversationMessages.length}`));
+        else console.error(chalk.dim(`Ephemeral | Messages: ${conversationMessages.length}`));
+        rl.prompt(); continue;
+      }
+      if (input === "/sessions") {
+        if (!sessionId) {
+          console.error(chalk.dim("Ephemeral mode has no saved sessions."));
+        } else {
+          const sessions = sessionMgr.listSessions();
+          for (const s of sessions.slice(0, 10)) {
+            const cur = s.id === sessionId ? chalk.green(" ←") : "";
+            console.error(chalk.cyan(s.id) + chalk.dim(` ${s.name}`) + cur);
+          }
+        }
+        rl.prompt(); continue;
+      }
+      if (input === "/usage") {
+        console.error(formatUsage(config.model, totalUsage));
+        rl.prompt(); continue;
+      }
+
+      // Auto-name
+      const meta = sessionId ? sessionMgr.loadSession(sessionId) : null;
+      if (meta && meta.meta.name === "Interactive session" && meta.meta.turns === 0) {
+        sessionMgr.updateMeta(meta.meta.id, { name: sessionMgr.autoName(input) });
+      }
+
+      conversationMessages.push({ role: "user", content: input });
+      if (sessionId) sessionMgr.appendMessage(sessionId, "user", input);
+
+      try {
+        let turn = 0;
+        while (turn < options.maxTurns) {
+          turn++;
+          emitTurnStarted(turn);
+
+          if (turn > 1 && needsCompaction(conversationMessages)) {
+            conversationMessages = await compactConversation(config, conversationMessages);
+          }
+
+          const acc = createAccumulator();
+          const turnUsage = createUsageStats();
+          const client = createClient(config);
+
+          const stream = await client.chat.completions.create({
+            model: config.model,
+            messages: conversationMessages,
+            tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+            stream: true,
+            max_tokens: config.maxTokens,
+            temperature: 0,
+          } as any);
+
+          for await (const chunk of stream as any) {
+            processChunk(acc, chunk, {
+              showReasoning: options.showReasoning,
+              showOutput,
+            });
+            extractUsageFromChatChunk(chunk, turnUsage);
+          }
+
+          accumulateUsage(totalUsage, turnUsage);
+          emitTurnCompleted(turn, turnUsage);
+
+          if (acc.toolCalls.length === 0) {
+            if (showOutput && acc.content) {
+              process.stdout.write("\n");
+            }
+            emitMessage(acc.content);
+            if (acc.content) {
+              conversationMessages.push({ role: "assistant", content: acc.content });
+              if (sessionId) {
+                sessionMgr.appendMessage(sessionId, "assistant", acc.content);
+                sessionMgr.updateMeta(sessionId, { turns: meta ? meta.meta.turns + turn : turn });
+              }
+            }
+            if (config.showUsage) console.error(formatUsage(config.model, turnUsage));
+            break;
+          }
+
+          const serialized: SerializedToolCall[] = acc.toolCalls
+            .filter(tc => tc.id && tc.function.name)
+            .map(tc => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
+
+          const aMsg: ChatMessage = {
+            role: "assistant", content: acc.content || null,
+            tool_calls: serialized.map(tc => ({
+              id: tc.id, type: "function" as const,
+              function: { name: tc.name, arguments: tc.arguments },
+            })),
+          };
+          conversationMessages.push(aMsg);
+          if (sessionId) {
+            sessionMgr.appendMessage(sessionId, "assistant", acc.content || null, { toolCalls: serialized });
+          }
+
+          if (showOutput && acc.content) process.stdout.write("\n");
+
+          for (const tc of serialized) {
+            emitToolCall(tc.name, tc.arguments, tc.id);
+            if (config.showToolCalls) console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
+
+            const approved = await checkApproval(config.approvalPolicy, tc.name, tc.arguments);
+            if (!approved) {
+              conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
+              continue;
+            }
+
+            runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: sessionId || hookSessionId });
+            const result = await executeTool(tc.name, tc.arguments, options.cwd);
+            if (config.showToolCalls) console.error(formatToolResult(result.output, result.error || false));
+            runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: sessionId || hookSessionId });
+            emitToolResult(tc.id, result.output, result.error || false);
+
+            if (sessionId) {
+              sessionMgr.appendToolExec(sessionId, tc.name, tc.arguments, result.output, result.error || false);
+              sessionMgr.appendMessage(sessionId, "tool", result.output, { toolCallId: tc.id });
+            }
+            conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
+          }
+        }
+      } catch (err: any) {
+        emitError(err.message);
+        console.error(chalk.red(`Error: ${err.message}`));
+      }
+
+      console.error("");
+      rl.prompt();
+    }
+  } finally {
+    runHooks(config.hooks, { type: "session-end", sessionId: hookSessionId });
+    emitSessionCompleted(hookSessionId, totalUsage.totalTokens > 0 ? totalUsage : undefined);
+    rl.close();
+  }
 }
 
 function sleep(ms: number): Promise<void> {

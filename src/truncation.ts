@@ -6,8 +6,12 @@
 // Rough approximation: ~4 chars per token for English text
 const CHARS_PER_TOKEN = 4;
 
+export function approxTokenCountFromChars(charCount: number): number {
+  return Math.ceil(Math.max(0, charCount) / CHARS_PER_TOKEN);
+}
+
 export function approxTokenCount(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
+  return approxTokenCountFromChars(text.length);
 }
 
 export function approxBytesForTokens(tokens: number): number {

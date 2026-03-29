@@ -3,10 +3,10 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 
-const testDir = path.join(os.tmpdir(), `grok-cli-test-${Date.now()}`);
-fs.mkdirSync(testDir, { recursive: true });
+const tmpRoot = path.join(process.cwd(), ".tmp");
+fs.mkdirSync(tmpRoot, { recursive: true });
+const testDir = fs.mkdtempSync(path.join(tmpRoot, "grok-cli-test-"));
 
 describe("tools", () => {
   describe("list_directory", () => {
@@ -122,5 +122,5 @@ describe("tools", () => {
 
 // Cleanup
 process.on("exit", () => {
-  try { fs.rmSync(testDir, { recursive: true }); } catch {}
+  try { fs.rmSync(testDir, { recursive: true, force: true }); } catch {}
 });

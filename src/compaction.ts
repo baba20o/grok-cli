@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { createClient } from "./client.js";
-import { approxTokenCount } from "./truncation.js";
+import { approxTokenCountFromChars } from "./truncation.js";
 import type { GrokConfig, ChatMessage } from "./types.js";
 
 // Auto-compact when conversation exceeds this many estimated tokens
@@ -15,13 +15,17 @@ export function needsCompaction(
 ): boolean {
   let totalChars = 0;
   for (const msg of messages) {
-    const content = typeof (msg as any).content === "string" ? (msg as any).content : "";
-    totalChars += content.length;
+    const content = (msg as any).content;
+    if (typeof content === "string") {
+      totalChars += content.length;
+    } else if (content != null) {
+      totalChars += JSON.stringify(content).length;
+    }
     // Tool calls add tokens too
     const tc = (msg as any).tool_calls;
     if (tc) totalChars += JSON.stringify(tc).length;
   }
-  return approxTokenCount(totalChars.toString()) > threshold;
+  return approxTokenCountFromChars(totalChars) > threshold;
 }
 
 /**

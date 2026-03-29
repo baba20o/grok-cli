@@ -3,9 +3,10 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 
-const testDir = path.join(os.tmpdir(), `grok-cli-session-test-${Date.now()}`);
+const tmpRoot = path.join(process.cwd(), ".tmp");
+fs.mkdirSync(tmpRoot, { recursive: true });
+const testDir = fs.mkdtempSync(path.join(tmpRoot, "grok-cli-session-test-"));
 
 describe("SessionManager", () => {
   const mgr = new SessionManager(testDir);
@@ -75,5 +76,5 @@ describe("SessionManager", () => {
 });
 
 process.on("exit", () => {
-  try { fs.rmSync(testDir, { recursive: true }); } catch {}
+  try { fs.rmSync(testDir, { recursive: true, force: true }); } catch {}
 });
