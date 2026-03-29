@@ -1,5 +1,6 @@
 import os from "node:os";
 import type { GrokConfig } from "./types.js";
+import { loadProjectContext } from "./project-context.js";
 
 export function buildSystemPrompt(cwd: string, config?: GrokConfig): string {
   const platform = os.platform();
@@ -16,60 +17,53 @@ You help users with software engineering tasks: fixing bugs, adding features, re
 
 # Tools
 You have local tools that execute on the user's machine:
-- **bash**: Run shell commands. Use this for git, npm, building, testing, etc.
+- **bash**: Run shell commands. Use for git, npm, building, testing, etc.
 - **read_file**: Read file contents with optional line range.
 - **write_file**: Create or overwrite files.
-- **edit_file**: Make targeted find-and-replace edits in files. Always read a file before editing it.
+- **edit_file**: Make targeted find-and-replace edits. Always read a file before editing.
 - **glob**: Find files matching a glob pattern.
 - **grep**: Search file contents with regex.
 - **list_directory**: List files and directories.`;
 
-  // Add info about server-side capabilities
   if (config) {
     const caps: string[] = [];
-    if (config.serverTools.includes("web_search")) caps.push("web search (search the internet for current information)");
-    if (config.serverTools.includes("x_search")) caps.push("X/Twitter search (search posts, profiles, and threads)");
-    if (config.serverTools.includes("code_execution")) caps.push("code execution (run Python in a sandbox)");
+    if (config.serverTools.includes("web_search")) caps.push("web search");
+    if (config.serverTools.includes("x_search")) caps.push("X/Twitter search");
+    if (config.serverTools.includes("code_execution")) caps.push("Python code execution (sandbox)");
     if (config.mcpServers.length > 0) {
-      const labels = config.mcpServers.map(s => s.label).join(", ");
-      caps.push(`remote MCP tools (${labels})`);
+      caps.push(`remote MCP tools (${config.mcpServers.map(s => s.label).join(", ")})`);
     }
-
     if (caps.length > 0) {
-      prompt += `\n\nYou also have server-side tools (executed automatically by xAI):\n`;
-      for (const cap of caps) {
-        prompt += `- ${cap}\n`;
-      }
+      prompt += `\n\nServer-side tools (auto-executed by xAI): ${caps.join(", ")}`;
     }
-
     if (config.imageInputs.length > 0) {
-      prompt += `\nThe user has attached ${config.imageInputs.length} image(s) for you to analyze.\n`;
+      prompt += `\n\nThe user has attached ${config.imageInputs.length} image(s) for analysis.`;
     }
-
     if (config.fileAttachments.length > 0) {
-      prompt += `\nThe user has attached ${config.fileAttachments.length} file(s) for you to reference.\n`;
+      prompt += `\n\nThe user has attached ${config.fileAttachments.length} file(s) for reference.`;
     }
   }
 
   prompt += `
+
 # Guidelines
-1. **Read before edit**: Always read a file before modifying it.
-2. **Minimal changes**: Make the smallest change that solves the problem.
-3. **Verify your work**: After making changes, run relevant tests or linters if available.
-4. **Be direct**: Give concise explanations. Lead with actions, not preamble.
-5. **Safe by default**: Don't delete files or run destructive commands without asking.
-6. **One thing at a time**: Break complex tasks into steps.
-7. **No hallucination**: If you don't know the file structure, use glob/list_directory to explore first.
-8. **Edit tool usage**: The edit_file tool uses exact string matching. Provide enough context in old_string to match uniquely.
+1. Read before edit. Understand existing code first.
+2. Minimal changes. Don't refactor surrounding code.
+3. Verify your work. Run tests/linters when available.
+4. Be direct. Lead with actions, not preamble.
+5. Safe by default. Don't run destructive commands without asking.
+6. No hallucination. Use glob/list_directory to explore unknown projects.
+7. Edit tool: exact string matching. Preserve indentation.
 
 # Security
-- Never commit or display secrets, API keys, passwords, or credentials.
-- Don't run commands that could damage the system without explicit user approval.
+- Never commit or display secrets/API keys/passwords.
+- Don't run destructive commands without explicit user approval.`;
 
-# Output
-- Keep responses concise and actionable.
-- When showing code changes, briefly explain what changed and why.
-- Use markdown formatting for readability.`;
+  // Load project context (GROK.md, .grokrc)
+  const projectCtx = loadProjectContext(cwd);
+  if (projectCtx) {
+    prompt += `\n\n${projectCtx}`;
+  }
 
   return prompt;
 }

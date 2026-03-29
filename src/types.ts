@@ -16,6 +16,7 @@ export interface GrokConfig {
   showToolCalls: boolean;
   showUsage: boolean;
   showCitations: boolean;
+  showDiffs: boolean;
   maxToolRounds: number;
   serverTools: ServerTool[];
   useResponsesApi: boolean;
@@ -24,8 +25,13 @@ export interface GrokConfig {
   imageInputs: string[];
   fileAttachments: string[];
   jsonSchema: string | null;
+  approvalPolicy: ApprovalPolicy;
+  notify: boolean;
+  hooks: HooksConfig;
+  convId: string | null;
 }
 
+export type ApprovalPolicy = "always-approve" | "ask" | "deny-writes";
 export type ServerTool = "web_search" | "x_search" | "code_execution";
 
 export interface McpServer {
@@ -33,22 +39,17 @@ export interface McpServer {
   label: string;
 }
 
+export interface HooksConfig {
+  "pre-tool"?: string[];
+  "post-tool"?: string[];
+  "session-start"?: string[];
+  "session-end"?: string[];
+  [key: string]: string[] | undefined;
+}
+
 export interface ToolResult {
   output: string;
   error?: boolean;
-}
-
-export interface ExecOptions {
-  prompt: string;
-  model?: string;
-  fast?: boolean;
-  verbose?: boolean;
-  showReasoning?: boolean;
-  maxTurns?: number;
-  webSearch?: boolean;
-  xSearch?: boolean;
-  codeExecution?: boolean;
-  cwd?: string;
 }
 
 // --- Session Types ---
@@ -91,9 +92,26 @@ export interface AgentOptions {
   cwd: string;
   sessionId?: string;
   sessionName?: string;
+  planMode?: boolean;
 }
 
 export interface Citation {
   url: string;
   title?: string;
+}
+
+// --- Config File Types ---
+
+export interface ConfigFile {
+  model?: string;
+  approval_policy?: ApprovalPolicy;
+  show_reasoning?: boolean;
+  show_usage?: boolean;
+  show_diffs?: boolean;
+  show_citations?: boolean;
+  notify?: boolean;
+  max_turns?: number;
+  mcp_servers?: Record<string, string>; // label -> url
+  hooks?: HooksConfig;
+  server_tools?: ServerTool[];
 }

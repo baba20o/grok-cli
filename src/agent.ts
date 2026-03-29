@@ -19,6 +19,8 @@ import {
   formatUsage,
   type UsageStats,
 } from "./usage.js";
+import { checkApproval } from "./approvals.js";
+import { runHooks } from "./hooks.js";
 import type {
   GrokConfig,
   ChatMessage,
@@ -139,10 +141,25 @@ async function runChatLoop(
       if (config.showToolCalls) {
         console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
       }
+
+      // Approval check
+      const approved = await checkApproval(config.approvalPolicy, tc.name, tc.arguments);
+      if (!approved) {
+        messages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
+        continue;
+      }
+
+      // Pre-tool hook
+      runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: session?.id });
+
       const result = await executeTool(tc.name, tc.arguments, options.cwd);
       if (config.showToolCalls) {
         console.error(formatToolResult(result.output, result.error || false));
       }
+
+      // Post-tool hook
+      runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: session?.id });
+
       if (session) {
         session.manager.appendToolExec(session.id, tc.name, tc.arguments, result.output, result.error || false);
         session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: tc.id });
@@ -324,10 +341,20 @@ async function runResponsesLoop(
         if (config.showToolCalls) {
           console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
         }
+
+        const approved = await checkApproval(config.approvalPolicy, fc.name, fc.arguments);
+        if (!approved) {
+          toolOutputs.push({ type: "function_call_output", call_id: fc.call_id, output: "Denied by user." });
+          continue;
+        }
+
+        runHooks(config.hooks, { type: "pre-tool", tool: fc.name, args: fc.arguments, sessionId: session?.id });
         const result = await executeTool(fc.name, fc.arguments, cwd);
         if (config.showToolCalls) {
           console.error(formatToolResult(result.output, result.error || false));
         }
+        runHooks(config.hooks, { type: "post-tool", tool: fc.name, output: result.output, error: result.error, sessionId: session?.id });
+
         if (session) {
           session.manager.appendToolExec(session.id, fc.name, fc.arguments, result.output, result.error || false);
           session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: fc.call_id });

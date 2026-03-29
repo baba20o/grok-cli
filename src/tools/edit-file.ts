@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
+import { showDiff } from "../diff.js";
+
+let showDiffsEnabled = true;
+export function setShowDiffs(enabled: boolean): void { showDiffsEnabled = enabled; }
 
 export async function executeEditFile(args: {
   file_path: string;
@@ -62,7 +66,11 @@ export async function executeEditFile(args: {
 
     fs.writeFileSync(filePath, updated, "utf-8");
 
-    // Show what changed
+    // Show diff
+    if (showDiffsEnabled) {
+      showDiff(args.file_path, content, updated);
+    }
+
     const oldLines = args.old_string.split("\n").length;
     const newLines = args.new_string.split("\n").length;
     const diffSummary = oldLines === newLines

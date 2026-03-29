@@ -2,6 +2,28 @@
 
 All notable changes to grok-cli will be documented in this file.
 
+## [0.3.0] - 2026-03-29
+
+### Added
+
+- **`grok-cli models`**: List all available models from `/v1/models`. `models info <id>` for details.
+- **`grok-cli doctor`**: Diagnostics — validates API key, shows permissions, checks config and project context.
+- **`grok-cli config`**: Configuration management. `config --init` creates `~/.grok-cli/config.json` with defaults.
+- **`grok-cli tokenize`**: Count tokens via xAI's tokenizer API. Estimate costs before running.
+- **`grok-cli generate-video`** / **`video`**: Generate videos with `grok-imagine-video` (1-15s, multiple aspect ratios).
+- **`grok-cli speak`** / **`tts`**: Text-to-speech with 4 voices (eve, ara, sal, rex). Output to file or stdout.
+- **`grok-cli collections`**: Manage persistent document collections for RAG (list, create).
+- **Approval system**: `--approve` prompts before writes/exec. `--deny-writes` blocks them entirely. Approvals cached per session.
+- **Config file**: `~/.grok-cli/config.json` for persistent settings (model, approval policy, MCP servers, hooks, etc.).
+- **Project context files**: Automatically loads `GROK.md` or `.grokrc` from the project directory into the system prompt. Like CLAUDE.md for Grok.
+- **Diff display**: File edits show unified diffs with red/green coloring. Disable with `--no-diffs`.
+- **Prompt cache routing**: `x-grok-conv-id` header for sticky server routing — cached tokens cost 10x less.
+- **Plan mode**: `--plan` makes Grok create a step-by-step plan before executing.
+- **Session fork**: `--fork <id>` copies a session's history into a new session for branching exploration.
+- **Desktop notifications**: `--notify` triggers terminal notification (OSC9/BEL) when tasks complete.
+- **Hooks system**: Pre/post tool-use hooks configured in `config.json`. Run custom scripts on tool execution.
+- **Deferred completions**: `--defer` fires a request and returns a poll ID immediately (non-blocking).
+
 ## [0.2.0] - 2026-03-29
 
 ### Added

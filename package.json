@@ -1,6 +1,6 @@
 {
   "name": "grok-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A coding assistant CLI powered by xAI's Grok models",
   "type": "module",
   "bin": {
