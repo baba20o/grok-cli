@@ -377,10 +377,11 @@ program.command("speak").alias("tts")
   .description("Convert text to speech")
   .argument("<text...>", "Text to speak")
   .option("--voice <name>", "Voice: eve, ara, sal, rex", "eve")
+  .option("--lang <code>", "Language code (BCP-47)", "en")
   .option("-o, --output <file>", "Output file (default: stdout)")
   .action(async (args: string[], opts: any) => {
     const config = getConfig();
-    console.error(chalk.dim(`Generating speech (voice: ${opts.voice})...`));
+    console.error(chalk.dim(`Generating speech (voice: ${opts.voice}, lang: ${opts.lang})...`));
     try {
       const response = await fetch(`${config.baseUrl}/tts`, {
         method: "POST",
@@ -390,8 +391,8 @@ program.command("speak").alias("tts")
         },
         body: JSON.stringify({
           text: args.join(" "),
-          voice: opts.voice,
-          response_format: "mp3",
+          voice_id: opts.voice,
+          language: opts.lang,
         }),
       });
       if (!response.ok) {
