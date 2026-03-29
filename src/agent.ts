@@ -2,7 +2,7 @@ import fs from "node:fs";
 import chalk from "chalk";
 import { createClient } from "./client.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import { toolDefinitions, executeTool } from "./tools/index.js";
+import { toolDefinitions, executeTool, setMaxOutputTokens } from "./tools/index.js";
 import {
   createAccumulator,
   processChunk,
@@ -21,6 +21,18 @@ import {
 } from "./usage.js";
 import { checkApproval } from "./approvals.js";
 import { runHooks } from "./hooks.js";
+import { needsCompaction, compactConversation } from "./compaction.js";
+import {
+  isJsonMode,
+  emitSessionStarted,
+  emitTurnStarted,
+  emitTurnCompleted,
+  emitToolCall,
+  emitToolResult,
+  emitMessage,
+  emitError,
+  emitSessionCompleted,
+} from "./json-output.js";
 import type {
   GrokConfig,
   ChatMessage,
@@ -42,6 +54,9 @@ async function runChatLoop(
   const tools: ToolDef[] = [...toolDefinitions];
   let turn = 0;
   const totalUsage = createUsageStats();
+  let lastFingerprint: string | null = null;
+  setMaxOutputTokens(config.maxOutputTokens);
+  const showOutput = !isJsonMode();
 
   // Add structured output if requested
   const extraParams: any = {};
@@ -59,9 +74,15 @@ async function runChatLoop(
 
   while (turn < options.maxTurns) {
     turn++;
+    emitTurnStarted(turn);
 
     if (options.verbose && turn > 1) {
       console.error(chalk.dim(`\n--- turn ${turn} ---`));
+    }
+
+    // Auto-compact if conversation is getting long
+    if (turn > 1 && needsCompaction(messages)) {
+      messages = await compactConversation(config, messages);
     }
 
     const acc = createAccumulator();
@@ -81,9 +102,11 @@ async function runChatLoop(
       for await (const chunk of stream as any) {
         processChunk(acc, chunk, {
           showReasoning: options.showReasoning,
-          showOutput: true,
+          showOutput,
         });
         extractUsageFromChatChunk(chunk, turnUsage);
+        // Track fingerprint
+        if (chunk?.system_fingerprint) lastFingerprint = chunk.system_fingerprint;
       }
     } catch (err: any) {
       if (err?.status === 429) {
@@ -93,6 +116,7 @@ async function runChatLoop(
         continue;
       }
       if (err?.status === 401) {
+        emitError("Authentication failed");
         console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
         process.exit(1);
       }
@@ -100,9 +124,11 @@ async function runChatLoop(
     }
 
     accumulateUsage(totalUsage, turnUsage);
+    emitTurnCompleted(turn, turnUsage);
 
     if (acc.toolCalls.length === 0) {
-      if (acc.content) process.stdout.write("\n");
+      if (showOutput && acc.content) process.stdout.write("\n");
+      emitMessage(acc.content);
       if (session) {
         session.manager.appendMessage(session.id, "assistant", acc.content);
         session.manager.updateMeta(session.id, { turns: turn });
@@ -135,9 +161,10 @@ async function runChatLoop(
       });
     }
 
-    if (acc.content) process.stdout.write("\n");
+    if (showOutput && acc.content) process.stdout.write("\n");
 
     for (const tc of serializedCalls) {
+      emitToolCall(tc.name, tc.arguments, tc.id);
       if (config.showToolCalls) {
         console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
       }
@@ -159,6 +186,7 @@ async function runChatLoop(
 
       // Post-tool hook
       runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: session?.id });
+      emitToolResult(tc.id, result.output, result.error || false);
 
       if (session) {
         session.manager.appendToolExec(session.id, tc.name, tc.arguments, result.output, result.error || false);
@@ -170,6 +198,7 @@ async function runChatLoop(
 
   console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
   if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+  if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
   return "";
 }
 
@@ -437,20 +466,24 @@ export async function runAgent(
   const sessionMgr = new SessionManager(config.sessionDir);
   let sessionCtx: { manager: SessionManager; id: string } | null = null;
 
-  // Create or resume session
-  if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
-    sessionCtx = { manager: sessionMgr, id: options.sessionId };
+  if (!config.ephemeral) {
+    // Create or resume session
+    if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
+      sessionCtx = { manager: sessionMgr, id: options.sessionId };
+    } else {
+      const meta = sessionMgr.createSession({
+        model: config.model,
+        cwd: options.cwd,
+        name: options.sessionName || sessionMgr.autoName(prompt),
+      });
+      sessionCtx = { manager: sessionMgr, id: meta.id };
+      if (!isJsonMode()) console.error(chalk.dim(`Session: ${meta.id}`));
+    }
+    sessionMgr.appendMessage(sessionCtx.id, "user", prompt);
+    emitSessionStarted(sessionCtx.id, config.model);
   } else {
-    const meta = sessionMgr.createSession({
-      model: config.model,
-      cwd: options.cwd,
-      name: options.sessionName || sessionMgr.autoName(prompt),
-    });
-    sessionCtx = { manager: sessionMgr, id: meta.id };
-    console.error(chalk.dim(`Session: ${meta.id}`));
+    if (!isJsonMode()) console.error(chalk.dim("(ephemeral — no session saved)"));
   }
-
-  sessionMgr.appendMessage(sessionCtx.id, "user", prompt);
 
   // Resolve image inputs
   const imageUrls: string[] = [];
@@ -493,7 +526,9 @@ export async function runAgent(
     }
   } else {
     messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
-    sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+    if (sessionCtx) {
+      sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+    }
   }
 
   // Add image to user message if present

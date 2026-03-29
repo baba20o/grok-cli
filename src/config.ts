@@ -99,6 +99,11 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     notify: overrides.notify ?? fileConfig.notify ?? false,
     hooks: overrides.hooks || fileConfig.hooks || {},
     convId: overrides.convId || null,
+    jsonOutput: overrides.jsonOutput ?? false,
+    ephemeral: overrides.ephemeral ?? false,
+    outputFile: overrides.outputFile || null,
+    color: overrides.color || "auto",
+    maxOutputTokens: overrides.maxOutputTokens || 8000,
   };
 }
 

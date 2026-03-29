@@ -48,6 +48,11 @@ program
   .option("--plan", "Plan mode: create a plan first, then execute")
   .option("--approve", "Ask before writes/exec (default: always-approve)")
   .option("--deny-writes", "Block all file writes and shell commands")
+  .option("--yolo", "Skip all approvals (dangerous)")
+  .option("--ephemeral", "Don't save session to disk")
+  .option("-o, --output <file>", "Write final message to file")
+  .option("--json", "JSONL output mode (machine-readable, events on stdout)")
+  .option("--color <mode>", "Color mode: auto, always, never", "auto")
   .option("--notify", "Desktop notification on completion")
   .option("--responses-api", "Force Responses API")
   .option("--web-search", "Enable web search")
@@ -91,6 +96,20 @@ program
     let approvalPolicy: any = "always-approve";
     if (opts.approve) approvalPolicy = "ask";
     if (opts.denyWrites) approvalPolicy = "deny-writes";
+    if (opts.yolo) approvalPolicy = "always-approve";
+
+    // Color control
+    if (opts.color === "never") {
+      process.env.NO_COLOR = "1";
+    } else if (opts.color === "always") {
+      process.env.FORCE_COLOR = "3";
+    }
+
+    // JSON mode
+    if (opts.json) {
+      const { setJsonMode } = await import("./json-output.js");
+      setJsonMode(true);
+    }
 
     const config: GrokConfig = getConfig({
       model,
@@ -109,6 +128,10 @@ program
       approvalPolicy,
       notify: opts.notify || false,
       hooks: {},
+      jsonOutput: opts.json || false,
+      ephemeral: opts.ephemeral || false,
+      outputFile: opts.output || null,
+      color: opts.color || "auto",
     });
 
     setShowDiffs(config.showDiffs);
@@ -180,17 +203,26 @@ program
 
     if (prompt) {
       const startTime = Date.now();
+      let result = "";
       try {
-        await runAgent(config, prompt, agentOpts);
+        result = await runAgent(config, prompt, agentOpts);
       } catch (err: any) {
+        const { emitError } = await import("./json-output.js");
+        emitError(err.message);
         console.error(chalk.red(`\nFatal: ${err.message}`));
         if (opts.verbose && err.stack) console.error(chalk.dim(err.stack));
         process.exit(1);
       }
+      // Write final message to file if requested
+      if (config.outputFile && result) {
+        const dir = path.dirname(config.outputFile);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(config.outputFile, result, "utf-8");
+        console.error(chalk.dim(`Output saved: ${config.outputFile}`));
+      }
       if (opts.verbose) {
         console.error(chalk.dim(`\n${((Date.now() - startTime) / 1000).toFixed(1)}s`));
       }
-      // Notification
       if (config.notify) {
         const { notify } = await import("./notifications.js");
         notify("grok-cli", "Task completed");

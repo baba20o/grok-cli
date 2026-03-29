@@ -2,6 +2,27 @@
 
 All notable changes to grok-cli will be documented in this file.
 
+## [0.4.0] - 2026-03-29
+
+### Added
+
+- **JSONL output mode** (`--json`): Machine-readable event streaming on stdout. Events: `session.started`, `turn.started`, `turn.completed`, `tool.called`, `tool.result`, `message`, `error`. Perfect for CI/automation pipelines.
+- **Ephemeral mode** (`--ephemeral`): Run without saving session to disk.
+- **Output file** (`-o, --output <file>`): Write final assistant message to a file.
+- **YOLO mode** (`--yolo`): Skip all approval prompts (for trusted environments).
+- **Color control** (`--color auto|always|never`): Override terminal color detection.
+- **Output truncation**: Tool outputs automatically truncated to prevent context window blowup. Preserves beginning and end, inserts omission notice.
+- **Context compaction**: When conversations exceed ~100k tokens, automatically summarizes older messages into a handoff brief and continues with fresh context.
+- **Fingerprint tracking**: Captures `system_fingerprint` from API responses (shown in verbose mode) for backend drift detection.
+- **Test suite**: 20 tests across tools (bash, read/write/edit, glob, grep, list_dir), sessions (create, load, update, delete, fork), and truncation. Uses Node.js native test runner.
+- **Proper exit codes**: Exit 1 on fatal errors for automation-friendly signaling.
+
+### Changed
+
+- Tool executor now applies output truncation before returning results.
+- Agent loop checks for context window limits and auto-compacts mid-session.
+- JSONL mode suppresses human-readable stdout output, keeping stderr for status.
+
 ## [0.3.0] - 2026-03-29
 
 ### Added

@@ -7,6 +7,7 @@ import { executeEditFile } from "./edit-file.js";
 import { executeGlob } from "./glob.js";
 import { executeGrep } from "./grep.js";
 import { executeListDir } from "./list-dir.js";
+import { truncateOutput } from "../truncation.js";
 
 export { toolDefinitions };
 
@@ -22,6 +23,9 @@ const executors: Record<string, ToolExecutor> = {
   list_directory: executeListDir,
 };
 
+let maxOutputTokens = 8000;
+export function setMaxOutputTokens(n: number): void { maxOutputTokens = n; }
+
 export async function executeTool(
   name: string,
   argsJson: string,
@@ -34,7 +38,10 @@ export async function executeTool(
 
   try {
     const args = JSON.parse(argsJson);
-    return await executor(args, cwd);
+    const result = await executor(args, cwd);
+    // Truncate large outputs to prevent context window blowup
+    result.output = truncateOutput(result.output, maxOutputTokens);
+    return result;
   } catch (err: any) {
     if (err instanceof SyntaxError) {
       return { output: `Invalid tool arguments JSON: ${err.message}`, error: true };

@@ -29,6 +29,11 @@ export interface GrokConfig {
   notify: boolean;
   hooks: HooksConfig;
   convId: string | null;
+  jsonOutput: boolean;
+  ephemeral: boolean;
+  outputFile: string | null;
+  color: "auto" | "always" | "never";
+  maxOutputTokens: number;
 }
 
 export type ApprovalPolicy = "always-approve" | "ask" | "deny-writes";
