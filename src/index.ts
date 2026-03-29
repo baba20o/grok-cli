@@ -321,15 +321,42 @@ program.command("generate-image").alias("imagine")
   .argument("<prompt...>", "Description")
   .option("--pro", "High quality ($0.07)")
   .option("-n, --count <n>", "Number of images", "1")
+  .option("-o, --output <dir>", "Output directory", "generated/images")
+  .option("--no-download", "Print URL only, don't download")
   .action(async (args: string[], opts: any) => {
     const config = getConfig();
     const client = createClient(config);
     const model = opts.pro ? "grok-imagine-image-pro" : "grok-imagine-image";
     const n = parseInt(opts.count, 10);
-    console.error(chalk.dim(`Generating ${n} image(s)...`));
+    console.error(chalk.dim(`Generating ${n} image(s) with ${model}...`));
     try {
       const res = await client.images.generate({ model, prompt: args.join(" "), n });
-      for (const img of res.data || []) console.log(img.url || img.b64_json);
+      const outDir = path.resolve(opts.output);
+      if (opts.download !== false) {
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      }
+      for (let i = 0; i < (res.data || []).length; i++) {
+        const img = res.data![i];
+        const url = img.url;
+        if (!url) continue;
+
+        if (opts.download === false) {
+          console.log(url);
+          continue;
+        }
+
+        // Download the image
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const ext = url.includes(".png") ? "png" : "jpg";
+        const filename = `grok-${timestamp}${n > 1 ? `-${i + 1}` : ""}.${ext}`;
+        const filePath = path.join(outDir, filename);
+
+        const imgRes = await fetch(url);
+        if (!imgRes.ok) { console.error(chalk.yellow(`Failed to download image ${i + 1}`)); continue; }
+        const buffer = Buffer.from(await imgRes.arrayBuffer());
+        fs.writeFileSync(filePath, buffer);
+        console.log(chalk.green(`Saved: ${filePath}`) + chalk.dim(` (${(buffer.length / 1024).toFixed(0)}KB)`));
+      }
       console.error(chalk.dim(`Cost: ~$${(opts.pro ? 0.07 * n : 0.02 * n).toFixed(2)}`));
     } catch (err: any) { console.error(chalk.red(err.message)); process.exit(1); }
   });
@@ -341,6 +368,7 @@ program.command("generate-video").alias("video")
   .argument("<prompt...>", "Description")
   .option("-d, --duration <s>", "Duration in seconds (1-15)", "8")
   .option("--aspect <ratio>", "Aspect ratio (16:9, 9:16, 1:1, 4:3)", "16:9")
+  .option("-o, --output <dir>", "Output directory", "generated/video")
   .action(async (args: string[], opts: any) => {
     const config = getConfig();
     console.error(chalk.dim("Generating video (this may take a while)..."));
@@ -359,10 +387,23 @@ program.command("generate-video").alias("video")
         }),
       });
       const data = await response.json() as any;
-      if (data.url) console.log(data.url);
-      else if (data.request_id) {
+      if (data.url) {
+        // Download the video
+        const outDir = path.resolve(opts.output);
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const filePath = path.join(outDir, `grok-video-${timestamp}.mp4`);
+        const vidRes = await fetch(data.url);
+        if (vidRes.ok) {
+          const buffer = Buffer.from(await vidRes.arrayBuffer());
+          fs.writeFileSync(filePath, buffer);
+          console.log(chalk.green(`Saved: ${filePath}`) + chalk.dim(` (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`));
+        } else {
+          console.log(data.url);
+        }
+      } else if (data.request_id) {
         console.log(chalk.cyan(`Video request ID: ${data.request_id}`));
-        console.log(chalk.dim("Video is generating. Poll for results or check xAI Console."));
+        console.log(chalk.dim("Video is generating async. Poll for results or check xAI Console."));
       } else {
         console.log(JSON.stringify(data, null, 2));
       }
@@ -378,7 +419,8 @@ program.command("speak").alias("tts")
   .argument("<text...>", "Text to speak")
   .option("--voice <name>", "Voice: eve, ara, sal, rex", "eve")
   .option("--lang <code>", "Language code (BCP-47)", "en")
-  .option("-o, --output <file>", "Output file (default: stdout)")
+  .option("-o, --output <file>", "Output file (auto-generated if omitted)")
+  .option("--dir <dir>", "Output directory", "generated/audio")
   .action(async (args: string[], opts: any) => {
     const config = getConfig();
     console.error(chalk.dim(`Generating speech (voice: ${opts.voice}, lang: ${opts.lang})...`));
@@ -401,12 +443,18 @@ program.command("speak").alias("tts")
         process.exit(1);
       }
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (opts.output) {
-        fs.writeFileSync(opts.output, buffer);
-        console.error(chalk.green(`Saved: ${opts.output} (${(buffer.length / 1024).toFixed(1)}KB)`));
-      } else {
-        process.stdout.write(buffer);
+      // Determine output path
+      let outPath = opts.output;
+      if (!outPath) {
+        const outDir = path.resolve(opts.dir);
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        outPath = path.join(outDir, `grok-tts-${opts.voice}-${timestamp}.mp3`);
       }
+      const dir = path.dirname(outPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(outPath, buffer);
+      console.log(chalk.green(`Saved: ${outPath}`) + chalk.dim(` (${(buffer.length / 1024).toFixed(1)}KB)`));
     } catch (err: any) { console.error(chalk.red(err.message)); process.exit(1); }
   });
 
