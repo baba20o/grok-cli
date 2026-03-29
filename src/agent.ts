@@ -1,0 +1,641 @@
+import fs from "node:fs";
+import chalk from "chalk";
+import { createClient } from "./client.js";
+import { buildSystemPrompt } from "./system-prompt.js";
+import { toolDefinitions, executeTool } from "./tools/index.js";
+import {
+  createAccumulator,
+  processChunk,
+  formatToolCall,
+  formatToolResult,
+} from "./stream.js";
+import { SessionManager } from "./session.js";
+import { getImageDataUrl, buildImageMessageContent, buildImageInputContent } from "./image.js";
+import {
+  createUsageStats,
+  extractUsageFromChatChunk,
+  extractUsageFromResponse,
+  accumulateUsage,
+  formatUsage,
+  type UsageStats,
+} from "./usage.js";
+import type {
+  GrokConfig,
+  ChatMessage,
+  ToolDef,
+  AgentOptions,
+  SerializedToolCall,
+  Citation,
+} from "./types.js";
+
+// ─── Chat Completions Agent Loop (streaming) ─────────────────────────────────
+
+async function runChatLoop(
+  config: GrokConfig,
+  messages: ChatMessage[],
+  options: AgentOptions,
+  session: { manager: SessionManager; id: string } | null,
+): Promise<string> {
+  const client = createClient(config);
+  const tools: ToolDef[] = [...toolDefinitions];
+  let turn = 0;
+  const totalUsage = createUsageStats();
+
+  // Add structured output if requested
+  const extraParams: any = {};
+  if (config.jsonSchema) {
+    try {
+      const schema = JSON.parse(config.jsonSchema);
+      extraParams.response_format = {
+        type: "json_schema",
+        json_schema: { name: "output", schema, strict: true },
+      };
+    } catch {
+      console.error(chalk.yellow("Invalid JSON schema, ignoring --json-schema"));
+    }
+  }
+
+  while (turn < options.maxTurns) {
+    turn++;
+
+    if (options.verbose && turn > 1) {
+      console.error(chalk.dim(`\n--- turn ${turn} ---`));
+    }
+
+    const acc = createAccumulator();
+    const turnUsage = createUsageStats();
+
+    try {
+      const stream = await client.chat.completions.create({
+        model: config.model,
+        messages,
+        tools: tools.length > 0 ? tools : undefined,
+        stream: true,
+        max_tokens: config.maxTokens,
+        temperature: 0,
+        ...extraParams,
+      } as any);
+
+      for await (const chunk of stream as any) {
+        processChunk(acc, chunk, {
+          showReasoning: options.showReasoning,
+          showOutput: true,
+        });
+        extractUsageFromChatChunk(chunk, turnUsage);
+      }
+    } catch (err: any) {
+      if (err?.status === 429) {
+        console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
+        await sleep(5000);
+        turn--;
+        continue;
+      }
+      if (err?.status === 401) {
+        console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
+        process.exit(1);
+      }
+      throw err;
+    }
+
+    accumulateUsage(totalUsage, turnUsage);
+
+    if (acc.toolCalls.length === 0) {
+      if (acc.content) process.stdout.write("\n");
+      if (session) {
+        session.manager.appendMessage(session.id, "assistant", acc.content);
+        session.manager.updateMeta(session.id, { turns: turn });
+      }
+      if (config.showUsage) {
+        console.error(formatUsage(config.model, totalUsage));
+      }
+      return acc.content;
+    }
+
+    // Tool calls
+    const serializedCalls: SerializedToolCall[] = acc.toolCalls
+      .filter(tc => tc.id && tc.function.name)
+      .map(tc => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
+
+    const assistantMsg: ChatMessage = {
+      role: "assistant",
+      content: acc.content || null,
+      tool_calls: serializedCalls.map(tc => ({
+        id: tc.id,
+        type: "function" as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    };
+    messages.push(assistantMsg);
+
+    if (session) {
+      session.manager.appendMessage(session.id, "assistant", acc.content || null, {
+        toolCalls: serializedCalls,
+      });
+    }
+
+    if (acc.content) process.stdout.write("\n");
+
+    for (const tc of serializedCalls) {
+      if (config.showToolCalls) {
+        console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
+      }
+      const result = await executeTool(tc.name, tc.arguments, options.cwd);
+      if (config.showToolCalls) {
+        console.error(formatToolResult(result.output, result.error || false));
+      }
+      if (session) {
+        session.manager.appendToolExec(session.id, tc.name, tc.arguments, result.output, result.error || false);
+        session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: tc.id });
+      }
+      messages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
+    }
+  }
+
+  console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
+  if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+  return "";
+}
+
+// ─── Responses API Agent Loop ─────────────────────────────────────────────────
+
+async function runResponsesLoop(
+  config: GrokConfig,
+  prompt: string,
+  options: AgentOptions,
+  session: { manager: SessionManager; id: string } | null,
+  previousResponseId?: string | null,
+  imageUrls?: string[],
+  fileIds?: string[],
+): Promise<string> {
+  const client = createClient(config);
+  const cwd = options.cwd;
+  const totalUsage = createUsageStats();
+
+  // Build tools array
+  const tools: any[] = [];
+  for (const st of config.serverTools) {
+    tools.push({ type: st === "code_execution" ? "code_interpreter" : st });
+  }
+  for (const mcp of config.mcpServers) {
+    tools.push({ type: "mcp", server_url: mcp.url, server_label: mcp.label });
+  }
+  for (const td of toolDefinitions) {
+    tools.push(td);
+  }
+
+  // Build input content
+  const inputContent: any[] = [];
+  if (imageUrls && imageUrls.length > 0) {
+    for (const url of imageUrls) {
+      inputContent.push(...buildImageInputContent(url, ""));
+    }
+  }
+  if (fileIds && fileIds.length > 0) {
+    for (const fid of fileIds) {
+      inputContent.push({ type: "input_file", file_id: fid });
+    }
+  }
+  inputContent.push({ type: "input_text", text: prompt });
+
+  // Build initial input
+  const input: any[] = [];
+  if (!previousResponseId) {
+    input.push({ role: "system", content: buildSystemPrompt(cwd, config) });
+  }
+  input.push({
+    role: "user",
+    content: inputContent.length === 1 ? prompt : inputContent,
+  });
+
+  let turn = 0;
+  let currentResponseId = previousResponseId || undefined;
+
+  while (turn < options.maxTurns) {
+    turn++;
+    if (options.verbose && turn > 1) {
+      console.error(chalk.dim(`\n--- turn ${turn} ---`));
+    }
+
+    try {
+      const reqParams: any = {
+        model: config.model,
+        input: turn === 1 ? input : input,
+        tools: tools.length > 0 ? tools : undefined,
+        store: true,
+      };
+      if (currentResponseId) reqParams.previous_response_id = currentResponseId;
+      if (config.jsonSchema) {
+        try {
+          reqParams.text = {
+            format: {
+              type: "json_schema",
+              name: "output",
+              schema: JSON.parse(config.jsonSchema),
+              strict: true,
+            },
+          };
+        } catch { /* ignore invalid schema */ }
+      }
+
+      const response: any = await (client as any).responses.create(reqParams);
+      currentResponseId = response.id;
+
+      // Track usage
+      const turnUsage = createUsageStats();
+      extractUsageFromResponse(response, turnUsage);
+      accumulateUsage(totalUsage, turnUsage);
+
+      if (session) {
+        session.manager.updateMeta(session.id, {
+          lastResponseId: currentResponseId || null,
+          turns: turn,
+        });
+      }
+
+      // Process output
+      const functionCalls: any[] = [];
+      let textContent = "";
+      const citations: Citation[] = [];
+
+      for (const item of response.output) {
+        if (item.type === "message") {
+          for (const part of item.content) {
+            if (part.type === "output_text" || part.type === "text") {
+              textContent += part.text;
+              process.stdout.write(part.text);
+            }
+          }
+          // Extract citations from message annotations
+          if (item.content) {
+            for (const part of item.content) {
+              if (part.annotations) {
+                for (const ann of part.annotations) {
+                  if (ann.type === "url_citation" || ann.url) {
+                    citations.push({ url: ann.url, title: ann.title });
+                  }
+                }
+              }
+            }
+          }
+        } else if (item.type === "function_call") {
+          functionCalls.push(item);
+        } else if (
+          item.type === "web_search_call" ||
+          item.type === "x_search_call" ||
+          item.type === "code_interpreter_call" ||
+          item.type === "mcp_call"
+        ) {
+          if (config.showToolCalls) {
+            const name = item.type.replace("_call", "");
+            console.error(chalk.magenta(`  ◆ ${name}`) + chalk.dim(" (server-side)"));
+          }
+        }
+      }
+
+      // Display citations
+      if (config.showCitations && citations.length > 0) {
+        console.error(chalk.dim("\n\nSources:"));
+        for (const c of citations.slice(0, 10)) {
+          console.error(chalk.dim(`  ${c.title || c.url}`));
+          if (c.title) console.error(chalk.dim(`    ${c.url}`));
+        }
+      }
+
+      if (functionCalls.length === 0) {
+        if (textContent) process.stdout.write("\n");
+        if (session) session.manager.appendMessage(session.id, "assistant", textContent);
+        if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+        return textContent;
+      }
+
+      // Execute client-side tools
+      if (session) {
+        session.manager.appendMessage(session.id, "assistant", textContent || null, {
+          toolCalls: functionCalls.map((fc: any) => ({
+            id: fc.call_id, name: fc.name, arguments: fc.arguments,
+          })),
+        });
+      }
+
+      if (textContent) process.stdout.write("\n");
+
+      const toolOutputs: any[] = [];
+      for (const fc of functionCalls) {
+        if (config.showToolCalls) {
+          console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
+        }
+        const result = await executeTool(fc.name, fc.arguments, cwd);
+        if (config.showToolCalls) {
+          console.error(formatToolResult(result.output, result.error || false));
+        }
+        if (session) {
+          session.manager.appendToolExec(session.id, fc.name, fc.arguments, result.output, result.error || false);
+          session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: fc.call_id });
+        }
+        toolOutputs.push({
+          type: "function_call_output",
+          call_id: fc.call_id,
+          output: result.output,
+        });
+      }
+
+      input.length = 0;
+      input.push(...toolOutputs);
+
+    } catch (err: any) {
+      if (err?.status === 429) {
+        console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
+        await sleep(5000);
+        turn--;
+        continue;
+      }
+      if (err?.status === 401) {
+        console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
+        process.exit(1);
+      }
+      // Fallback to chat.completions if Responses API unavailable
+      if (err?.status === 404 || err?.message?.includes("responses")) {
+        console.error(chalk.yellow("\nResponses API unavailable, falling back to chat.completions..."));
+        const msgs: ChatMessage[] = [
+          { role: "system", content: buildSystemPrompt(cwd, config) },
+          { role: "user", content: prompt },
+        ];
+        return runChatLoop(config, msgs, options, session);
+      }
+      throw err;
+    }
+  }
+
+  console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
+  if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
+  return "";
+}
+
+// ─── File Upload Helper ──────────────────────────────────────────────────────
+
+async function uploadFiles(config: GrokConfig, cwd: string): Promise<string[]> {
+  if (config.fileAttachments.length === 0) return [];
+
+  const client = createClient(config);
+  const fileIds: string[] = [];
+
+  for (const filePath of config.fileAttachments) {
+    const resolved = require("node:path").resolve(cwd, filePath);
+    if (!fs.existsSync(resolved)) {
+      console.error(chalk.yellow(`File not found, skipping: ${filePath}`));
+      continue;
+    }
+    try {
+      console.error(chalk.dim(`  Uploading ${filePath}...`));
+      const file = await (client as any).files.create({
+        file: fs.createReadStream(resolved),
+        purpose: "assistants",
+      });
+      fileIds.push(file.id);
+      console.error(chalk.dim(`  Uploaded: ${file.id}`));
+    } catch (err: any) {
+      console.error(chalk.yellow(`Failed to upload ${filePath}: ${err.message}`));
+    }
+  }
+  return fileIds;
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+export async function runAgent(
+  config: GrokConfig,
+  prompt: string,
+  options: AgentOptions,
+): Promise<string> {
+  const sessionMgr = new SessionManager(config.sessionDir);
+  let sessionCtx: { manager: SessionManager; id: string } | null = null;
+
+  // Create or resume session
+  if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
+    sessionCtx = { manager: sessionMgr, id: options.sessionId };
+  } else {
+    const meta = sessionMgr.createSession({
+      model: config.model,
+      cwd: options.cwd,
+      name: options.sessionName || sessionMgr.autoName(prompt),
+    });
+    sessionCtx = { manager: sessionMgr, id: meta.id };
+    console.error(chalk.dim(`Session: ${meta.id}`));
+  }
+
+  sessionMgr.appendMessage(sessionCtx.id, "user", prompt);
+
+  // Resolve image inputs
+  const imageUrls: string[] = [];
+  for (const img of config.imageInputs) {
+    try {
+      imageUrls.push(getImageDataUrl(img, options.cwd));
+    } catch (err: any) {
+      console.error(chalk.yellow(`Image error: ${err.message}`));
+    }
+  }
+
+  // Upload files if any
+  const fileIds = await uploadFiles(config, options.cwd);
+
+  // Determine API mode
+  const useResponses = config.useResponsesApi ||
+    config.mcpServers.length > 0 ||
+    config.serverTools.length > 0 ||
+    fileIds.length > 0;
+
+  if (useResponses) {
+    let prevResponseId: string | null = null;
+    if (options.sessionId) {
+      const loaded = sessionMgr.loadSession(options.sessionId);
+      if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
+    }
+    return runResponsesLoop(config, prompt, options, sessionCtx, prevResponseId, imageUrls, fileIds);
+  }
+
+  // Default: chat.completions
+  let messages: ChatMessage[];
+
+  if (options.sessionId) {
+    const loaded = sessionMgr.loadSession(options.sessionId);
+    if (loaded) {
+      messages = loaded.messages;
+      console.error(chalk.dim(`Resumed session with ${loaded.messages.length} messages`));
+    } else {
+      messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+    }
+  } else {
+    messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+    sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+  }
+
+  // Add image to user message if present
+  if (imageUrls.length > 0) {
+    const content = buildImageMessageContent(imageUrls[0], prompt);
+    messages.push({ role: "user", content } as any);
+  } else {
+    messages.push({ role: "user", content: prompt });
+  }
+
+  return runChatLoop(config, messages, options, sessionCtx);
+}
+
+export async function runInteractive(config: GrokConfig, options: AgentOptions): Promise<void> {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+    prompt: chalk.bold.blue("grok> "),
+  });
+
+  const sessionMgr = new SessionManager(config.sessionDir);
+  let sessionId: string;
+  let conversationMessages: ChatMessage[];
+
+  if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
+    const loaded = sessionMgr.loadSession(options.sessionId);
+    if (loaded) {
+      sessionId = loaded.meta.id;
+      conversationMessages = loaded.messages;
+      console.error(
+        chalk.bold("Grok CLI") + chalk.dim(` (${config.model})`) +
+        chalk.green(` — resumed ${sessionId}`)
+      );
+      console.error(chalk.dim(`Loaded ${loaded.messages.length} messages`));
+    } else {
+      const meta = sessionMgr.createSession({ model: config.model, cwd: options.cwd });
+      sessionId = meta.id;
+      conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+      sessionMgr.appendMessage(sessionId, "system", buildSystemPrompt(options.cwd, config));
+    }
+  } else {
+    const meta = sessionMgr.createSession({
+      model: config.model, cwd: options.cwd,
+      name: options.sessionName || "Interactive session",
+    });
+    sessionId = meta.id;
+    conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+    sessionMgr.appendMessage(sessionId, "system", buildSystemPrompt(options.cwd, config));
+    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${config.model}) — ${sessionId}`));
+  }
+
+  console.error(chalk.dim('Commands: /session /sessions exit\n'));
+
+  const sessionCtx = { manager: sessionMgr, id: sessionId };
+  const totalUsage = createUsageStats();
+
+  rl.prompt();
+
+  for await (const line of rl) {
+    const input = line.trim();
+    if (!input) { rl.prompt(); continue; }
+    if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit") {
+      console.error(chalk.dim(`Session saved: ${sessionId}`));
+      if (config.showUsage && totalUsage.totalTokens > 0) {
+        console.error(formatUsage(config.model, totalUsage));
+      }
+      break;
+    }
+    if (input === "/session") {
+      console.error(chalk.dim(`ID: ${sessionId} | Messages: ${conversationMessages.length}`));
+      rl.prompt(); continue;
+    }
+    if (input === "/sessions") {
+      const sessions = sessionMgr.listSessions();
+      for (const s of sessions.slice(0, 10)) {
+        const cur = s.id === sessionId ? chalk.green(" ←") : "";
+        console.error(chalk.cyan(s.id) + chalk.dim(` ${s.name}`) + cur);
+      }
+      rl.prompt(); continue;
+    }
+    if (input === "/usage") {
+      console.error(formatUsage(config.model, totalUsage));
+      rl.prompt(); continue;
+    }
+
+    // Auto-name
+    const meta = sessionMgr.loadSession(sessionId);
+    if (meta && meta.meta.name === "Interactive session" && meta.meta.turns === 0) {
+      sessionMgr.updateMeta(sessionId, { name: sessionMgr.autoName(input) });
+    }
+
+    conversationMessages.push({ role: "user", content: input });
+    sessionMgr.appendMessage(sessionId, "user", input);
+
+    try {
+      let turn = 0;
+      while (turn < options.maxTurns) {
+        turn++;
+        const acc = createAccumulator();
+        const turnUsage = createUsageStats();
+        const client = createClient(config);
+
+        const stream = await client.chat.completions.create({
+          model: config.model,
+          messages: conversationMessages,
+          tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+          stream: true,
+          max_tokens: config.maxTokens,
+          temperature: 0,
+        } as any);
+
+        for await (const chunk of stream as any) {
+          processChunk(acc, chunk, {
+            showReasoning: options.showReasoning,
+            showOutput: true,
+          });
+          extractUsageFromChatChunk(chunk, turnUsage);
+        }
+
+        accumulateUsage(totalUsage, turnUsage);
+
+        if (acc.toolCalls.length === 0) {
+          if (acc.content) {
+            process.stdout.write("\n");
+            conversationMessages.push({ role: "assistant", content: acc.content });
+            sessionMgr.appendMessage(sessionId, "assistant", acc.content);
+            sessionMgr.updateMeta(sessionId, { turns: meta ? meta.meta.turns + turn : turn });
+          }
+          if (config.showUsage) console.error(formatUsage(config.model, turnUsage));
+          break;
+        }
+
+        const serialized: SerializedToolCall[] = acc.toolCalls
+          .filter(tc => tc.id && tc.function.name)
+          .map(tc => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
+
+        const aMsg: ChatMessage = {
+          role: "assistant", content: acc.content || null,
+          tool_calls: serialized.map(tc => ({
+            id: tc.id, type: "function" as const,
+            function: { name: tc.name, arguments: tc.arguments },
+          })),
+        };
+        conversationMessages.push(aMsg);
+        sessionMgr.appendMessage(sessionId, "assistant", acc.content || null, { toolCalls: serialized });
+
+        if (acc.content) process.stdout.write("\n");
+
+        for (const tc of serialized) {
+          if (config.showToolCalls) console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
+          const result = await executeTool(tc.name, tc.arguments, options.cwd);
+          if (config.showToolCalls) console.error(formatToolResult(result.output, result.error || false));
+          sessionMgr.appendToolExec(sessionId, tc.name, tc.arguments, result.output, result.error || false);
+          sessionMgr.appendMessage(sessionId, "tool", result.output, { toolCallId: tc.id });
+          conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
+        }
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+    }
+
+    console.error("");
+    rl.prompt();
+  }
+
+  rl.close();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
