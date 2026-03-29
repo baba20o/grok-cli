@@ -23,6 +23,7 @@ import {
 import { checkApproval } from "./approvals.js";
 import { runHooks } from "./hooks.js";
 import { needsCompaction, compactConversation } from "./compaction.js";
+import { formatApiError } from "./cli-errors.js";
 import {
   isJsonMode,
   emitSessionStarted,
@@ -476,11 +477,11 @@ export async function runAgent(
   prompt: string,
   options: AgentOptions,
 ): Promise<string> {
-  const sessionMgr = new SessionManager(config.sessionDir);
+  const sessionMgr = config.ephemeral ? null : new SessionManager(config.sessionDir);
   let sessionCtx: { manager: SessionManager; id: string } | null = null;
   let runtimeSessionId = `ephemeral-${Date.now().toString(36)}`;
 
-  if (!config.ephemeral) {
+  if (sessionMgr) {
     // Create or resume session
     if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
       sessionCtx = { manager: sessionMgr, id: options.sessionId };
@@ -527,7 +528,7 @@ export async function runAgent(
 
     if (useResponses) {
       let prevResponseId: string | null = null;
-      if (!config.ephemeral && options.sessionId) {
+      if (sessionMgr && options.sessionId) {
         const loaded = sessionMgr.loadSession(options.sessionId);
         if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
       }
@@ -537,7 +538,7 @@ export async function runAgent(
     // Default: chat.completions
     let messages: ChatMessage[];
 
-    if (!config.ephemeral && options.sessionId) {
+    if (sessionMgr && options.sessionId) {
       const loaded = sessionMgr.loadSession(options.sessionId);
       if (loaded) {
         messages = loaded.messages;
@@ -548,7 +549,7 @@ export async function runAgent(
     } else {
       messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
       if (sessionCtx) {
-        sessionMgr.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+        sessionCtx.manager.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
       }
     }
 
@@ -575,7 +576,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
     prompt: chalk.bold.blue("grok> "),
   });
 
-  const sessionMgr = new SessionManager(config.sessionDir);
+  const sessionMgr = config.ephemeral ? null : new SessionManager(config.sessionDir);
   let sessionId: string | null = null;
   let conversationMessages: ChatMessage[];
   const showOutput = !isJsonMode();
@@ -589,7 +590,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
     }
     conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
     console.error(chalk.bold("Grok CLI") + chalk.dim(` (${config.model}) — ephemeral`));
-  } else if (options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
+  } else if (sessionMgr && options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
     const loaded = sessionMgr.loadSession(options.sessionId);
     if (loaded) {
       sessionId = loaded.meta.id;
@@ -606,6 +607,9 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
       sessionMgr.appendMessage(sessionId, "system", buildSystemPrompt(options.cwd, config));
     }
   } else {
+    if (!sessionMgr) {
+      throw new Error("Interactive session storage is unavailable.");
+    }
     const meta = sessionMgr.createSession({
       model: config.model, cwd: options.cwd,
       name: options.sessionName || "Interactive session",
@@ -647,7 +651,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
         if (!sessionId) {
           console.error(chalk.dim("Ephemeral mode has no saved sessions."));
         } else {
-          const sessions = sessionMgr.listSessions();
+          const sessions = sessionMgr!.listSessions();
           for (const s of sessions.slice(0, 10)) {
             const cur = s.id === sessionId ? chalk.green(" ←") : "";
             console.error(chalk.cyan(s.id) + chalk.dim(` ${s.name}`) + cur);
@@ -661,13 +665,13 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
       }
 
       // Auto-name
-      const meta = sessionId ? sessionMgr.loadSession(sessionId) : null;
-      if (meta && meta.meta.name === "Interactive session" && meta.meta.turns === 0) {
+      const meta = sessionId && sessionMgr ? sessionMgr.loadSession(sessionId) : null;
+      if (meta && sessionMgr && meta.meta.name === "Interactive session" && meta.meta.turns === 0) {
         sessionMgr.updateMeta(meta.meta.id, { name: sessionMgr.autoName(input) });
       }
 
       conversationMessages.push({ role: "user", content: input });
-      if (sessionId) sessionMgr.appendMessage(sessionId, "user", input);
+      if (sessionId && sessionMgr) sessionMgr.appendMessage(sessionId, "user", input);
 
       try {
         let turn = 0;
@@ -710,7 +714,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
             emitMessage(acc.content);
             if (acc.content) {
               conversationMessages.push({ role: "assistant", content: acc.content });
-              if (sessionId) {
+              if (sessionId && sessionMgr) {
                 sessionMgr.appendMessage(sessionId, "assistant", acc.content);
                 sessionMgr.updateMeta(sessionId, { turns: meta ? meta.meta.turns + turn : turn });
               }
@@ -731,7 +735,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
             })),
           };
           conversationMessages.push(aMsg);
-          if (sessionId) {
+          if (sessionId && sessionMgr) {
             sessionMgr.appendMessage(sessionId, "assistant", acc.content || null, { toolCalls: serialized });
           }
 
@@ -753,7 +757,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
             runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: sessionId || hookSessionId });
             emitToolResult(tc.id, result.output, result.error || false);
 
-            if (sessionId) {
+            if (sessionId && sessionMgr) {
               sessionMgr.appendToolExec(sessionId, tc.name, tc.arguments, result.output, result.error || false);
               sessionMgr.appendMessage(sessionId, "tool", result.output, { toolCallId: tc.id });
             }
@@ -761,8 +765,11 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
           }
         }
       } catch (err: any) {
-        emitError(err.message);
-        console.error(chalk.red(`Error: ${err.message}`));
+        const message = formatApiError("Request failed", err);
+        emitError(message);
+        if (!isJsonMode()) {
+          console.error(chalk.red(`Error: ${message}`));
+        }
       }
 
       console.error("");

@@ -8,7 +8,10 @@ import { getConfig, MODELS } from "./config.js";
 import { runAgent, runInteractive } from "./agent.js";
 import { SessionManager } from "./session.js";
 import { createClient } from "./client.js";
+import { formatApiError, formatSessionDirError, getResponseErrorMessage, isNetworkError } from "./cli-errors.js";
+import { emitError, isJsonMode, setJsonMode } from "./json-output.js";
 import { setShowDiffs } from "./tools/edit-file.js";
+import { approxTokenCount } from "./truncation.js";
 import type { GrokConfig, ServerTool, McpServer } from "./types.js";
 
 const VERSION = readVersion();
@@ -125,7 +128,6 @@ program
 
     // JSON mode
     if (opts.json) {
-      const { setJsonMode } = await import("./json-output.js");
       setJsonMode(true);
     }
 
@@ -231,11 +233,7 @@ program
       try {
         result = await runAgent(config, prompt, agentOpts);
       } catch (err: any) {
-        const { emitError } = await import("./json-output.js");
-        emitError(err.message);
-        console.error(chalk.red(`\nFatal: ${err.message}`));
-        if (opts.verbose && err.stack) console.error(chalk.dim(err.stack));
-        process.exit(1);
+        await fatalExit("Request failed", err, opts.verbose);
       }
       // Write final message to file if requested
       if (config.outputFile && result) {
@@ -252,7 +250,11 @@ program
         notify("grok-cli", "Task completed");
       }
     } else {
-      await runInteractive(config, agentOpts);
+      try {
+        await runInteractive(config, agentOpts);
+      } catch (err: any) {
+        await fatalExit("Interactive session failed", err, opts.verbose);
+      }
     }
   });
 
@@ -277,7 +279,8 @@ modelsCmd
         console.log(chalk.cyan(m.id) + chalk.dim(`  owner=${m.owned_by || "xai"}`));
       }
     } catch (err: any) {
-      console.error(chalk.red(`Error: ${err.message}`));
+      console.error(chalk.red(formatApiError("Failed to list models", err)));
+      process.exit(1);
     }
   });
 
@@ -293,7 +296,12 @@ modelsCmd
       console.log(chalk.bold("Created: ") + new Date((model.created || 0) * 1000).toISOString());
       console.log(chalk.bold("Object: ") + model.object);
     } catch (err: any) {
-      console.error(chalk.red(`Model not found: ${modelId}`));
+      if (err?.status === 404) {
+        console.error(chalk.red(`Model not found: ${modelId}`));
+      } else {
+        console.error(chalk.red(formatApiError(`Failed to load model ${modelId}`, err)));
+      }
+      process.exit(1);
     }
   });
 
@@ -311,7 +319,8 @@ modelsCmd.action(async () => {
       console.log(chalk.cyan(m.id) + chalk.dim(`  owner=${m.owned_by || "xai"}`));
     }
   } catch (err: any) {
-    console.error(chalk.red(`Error: ${err.message}`));
+    console.error(chalk.red(formatApiError("Failed to list models", err)));
+    process.exit(1);
   }
 });
 
@@ -323,7 +332,7 @@ sessionsCmd.command("list").alias("ls").description("List sessions")
   .option("--limit <n>", "Max to show", "20")
   .action((opts: any) => {
     const config = getConfig();
-    const mgr = new SessionManager(config.sessionDir);
+    const mgr = createSessionManagerOrExit(config.sessionDir);
     const sessions = mgr.listSessions();
     if (sessions.length === 0) { console.log(chalk.dim("No sessions.")); return; }
     const limit = parseInt(opts.limit, 10);
@@ -337,7 +346,7 @@ sessionsCmd.command("list").alias("ls").description("List sessions")
 sessionsCmd.command("show <id>").description("Show session")
   .action((id: string) => {
     const config = getConfig();
-    const mgr = new SessionManager(config.sessionDir);
+    const mgr = createSessionManagerOrExit(config.sessionDir);
     const s = mgr.loadSession(id);
     if (!s) { console.error(chalk.red(`Not found: ${id}`)); process.exit(1); }
     console.log(chalk.bold("ID:      ") + chalk.cyan(s.meta.id));
@@ -359,7 +368,7 @@ sessionsCmd.command("show <id>").description("Show session")
 sessionsCmd.command("delete <id>").alias("rm").description("Delete session")
   .action((id: string) => {
     const config = getConfig();
-    const mgr = new SessionManager(config.sessionDir);
+    const mgr = createSessionManagerOrExit(config.sessionDir);
     if (mgr.deleteSession(id)) console.log(chalk.green(`Deleted: ${id}`));
     else { console.error(chalk.red(`Not found: ${id}`)); process.exit(1); }
   });
@@ -367,7 +376,7 @@ sessionsCmd.command("delete <id>").alias("rm").description("Delete session")
 sessionsCmd.command("clear").description("Delete all")
   .action(() => {
     const config = getConfig();
-    console.log(chalk.green(`Cleared ${new SessionManager(config.sessionDir).clearSessions()} session(s).`));
+    console.log(chalk.green(`Cleared ${createSessionManagerOrExit(config.sessionDir).clearSessions()} session(s).`));
   });
 
 // ─── Image Generation ────────────────────────────────────────────────────────
@@ -582,7 +591,7 @@ program.command("doctor").description("Check setup and API key")
       for await (const _ of models) count++;
       console.log(chalk.green(`API key valid. ${count} models available.`));
     } catch (err: any) {
-      console.log(chalk.red(`API key invalid: ${err.message}`));
+      console.log(chalk.red(formatApiError("API key validation failed", err)));
     }
 
     // Check API key info
@@ -599,9 +608,14 @@ program.command("doctor").description("Check setup and API key")
     } catch { /* endpoint may not exist */ }
 
     // Sessions
-    const mgr = new SessionManager(config.sessionDir);
-    const sessions = mgr.listSessions();
-    console.log(chalk.bold("\nSessions: ") + `${sessions.length} saved`);
+    try {
+      const mgr = new SessionManager(config.sessionDir);
+      const sessions = mgr.listSessions();
+      console.log(chalk.bold("\nSessions: ") + `${sessions.length} saved`);
+    } catch (err: any) {
+      console.log(chalk.bold("\nSessions: ") + chalk.red("unavailable"));
+      console.log(chalk.dim(`  ${formatSessionDirError(config.sessionDir, err)}`));
+    }
   });
 
 // ─── Tokenize ────────────────────────────────────────────────────────────────
@@ -621,6 +635,9 @@ program.command("tokenize").description("Count tokens in text")
         },
         body: JSON.stringify({ model: opts.model, text }),
       });
+      if (!res.ok) {
+        throw new Error(await getResponseErrorMessage("Tokenization failed", res));
+      }
       const data = await res.json() as any;
       const tokens = data.token_ids || data.tokens || [];
       console.log(chalk.bold(`Tokens: `) + tokens.length);
@@ -628,7 +645,17 @@ program.command("tokenize").description("Count tokens in text")
         const preview = data.token_ids.slice(0, 20).map((t: any) => t.string_token || t).join("");
         console.log(chalk.dim(`Preview: ${preview}${tokens.length > 20 ? "..." : ""}`));
       }
-    } catch (err: any) { console.error(chalk.red(err.message)); }
+    } catch (err: any) {
+      if (isNetworkError(err)) {
+        const estimatedTokens = approxTokenCount(text);
+        console.error(chalk.yellow(formatApiError("Tokenization API unavailable", err)));
+        console.log(chalk.bold("Tokens (estimated): ") + estimatedTokens);
+        console.log(chalk.dim(`Preview: ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`));
+        return;
+      }
+      console.error(chalk.red(err instanceof Error ? err.message : formatApiError("Tokenization failed", err)));
+      process.exit(1);
+    }
   });
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -688,6 +715,31 @@ program.parse();
 function trunc(s: string, n: number): string {
   const l = s.replace(/\n/g, " ").trim();
   return l.length <= n ? l : l.slice(0, n - 3) + "...";
+}
+
+async function fatalExit(context: string, err: any, verbose: boolean): Promise<never> {
+  const message = getFatalMessage(context, err);
+  emitError(message);
+  if (!isJsonMode()) {
+    console.error(chalk.red(`\nFatal: ${message}`));
+    if (verbose && err?.stack) console.error(chalk.dim(err.stack));
+  }
+  process.exit(1);
+}
+
+function getFatalMessage(context: string, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("session storage")) return message;
+  return formatApiError(context, err);
+}
+
+function createSessionManagerOrExit(baseDir: string): SessionManager {
+  try {
+    return new SessionManager(baseDir);
+  } catch (err: any) {
+    console.error(chalk.red(formatSessionDirError(baseDir, err)));
+    process.exit(1);
+  }
 }
 
 function fmtAge(iso: string): string {

@@ -19,8 +19,10 @@ export class SessionManager {
   }
 
   private ensureDir(): void {
-    if (!fs.existsSync(this.sessionDir)) {
+    try {
       fs.mkdirSync(this.sessionDir, { recursive: true });
+    } catch (err: any) {
+      throw new Error(`Unable to initialize session storage at ${this.sessionDir}: ${err.message}`);
     }
   }
 
