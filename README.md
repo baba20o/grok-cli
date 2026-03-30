@@ -1,5 +1,8 @@
 # grok-agent
 
+[![npm version](https://img.shields.io/npm/v/grok-agent.svg)](https://www.npmjs.com/package/grok-agent)
+[![license](https://img.shields.io/npm/l/grok-agent.svg)](https://github.com/baba20o/grok-cli/blob/main/LICENSE)
+
 A coding assistant CLI powered by xAI's Grok models.
 
 `grok-agent` gives you an agentic assistant in your terminal that can chat, inspect and edit code, run shell commands, search a repo, attach files/images, use xAI server-side tools, and keep JSONL-backed session history.
@@ -24,27 +27,47 @@ A coding assistant CLI powered by xAI's Grok models.
 - Structured JSON output with `--json-schema`
 - Token usage display, citations, approvals, hooks, and notifications
 
-## Quickstart
+## Install
 
 ```bash
-# Prerequisites: Node.js >= 20 and an xAI API key
+npm install -g grok-agent
+```
 
-git clone https://github.com/baba20o/grok-agent.git
-cd grok-agent
-npm install
-npm run build
-npm link
+Requires Node.js >= 20 and an [xAI API key](https://console.x.ai/team/default/api-keys).
 
+Set your API key:
+
+```bash
+# Option 1: environment variable
 export XAI_API_KEY=your_key_here
+
+# Option 2: .env file (in your project root or ~/.grok-cli/.env)
+echo "XAI_API_KEY=your_key_here" > .env
+```
+
+Verify everything works:
+
+```bash
 grok-agent doctor
+```
+
+Start using it:
+
+```bash
 grok-agent "what does this project do?"
 ```
 
-You can also place `XAI_API_KEY` in a local `.env` file. The CLI loads `.env` from:
+### Install from source
 
-- the current directory
-- the parent directory
-- `~/.grok-agent/.env`
+```bash
+git clone https://github.com/baba20o/grok-cli.git
+cd grok-cli
+npm install
+npm run build
+npm link
+```
+
+The CLI loads `.env` from the current directory, the parent directory, or `~/.grok-cli/.env`.
 
 ## Usage
 
