@@ -23,7 +23,7 @@ export function createClient(config: GrokConfig): OpenAI {
   if (clientInstance && convId === lastConvId) return clientInstance;
 
   const headers: Record<string, string> = {
-    "X-Grok-Client": `grok-cli/${CLIENT_VERSION}`,
+    "X-Grok-Client": `grok-agent/${CLIENT_VERSION}`,
   };
 
   // Prompt cache sticky routing

@@ -76,7 +76,7 @@ function readVersion(): string {
 }
 
 const program = new Command()
-  .name("grok-cli")
+  .name("grok-agent")
   .description("A coding assistant CLI powered by xAI's Grok models")
   .version(VERSION);
 
@@ -289,7 +289,7 @@ program
       }
       if (config.notify) {
         const { notify } = await import("./notifications.js");
-        notify("grok-cli", "Task completed");
+        notify("grok-agent", "Task completed");
       }
     } else {
       if (config.jsonOutput) {
@@ -637,7 +637,7 @@ program.command("generate-video").alias("video")
 program.command("speak").alias("tts")
   .description("Convert text to speech")
   .argument("<text...>", "Text to speak")
-  .option("--voice <name>", "Voice id (see grok-cli tts-voices)", "eve")
+  .option("--voice <name>", "Voice id (see grok-agent tts-voices)", "eve")
   .option("--lang <code>", "Language code (BCP-47)", "en")
   .option("--codec <codec>", "Audio codec: mp3, wav, pcm, mulaw, alaw", "mp3")
   .option("--sample-rate <hz>", "Audio sample rate")
@@ -984,7 +984,7 @@ realtimeCmd.command("secret").description("Create an ephemeral realtime client s
 program.command("doctor").description("Check setup and API key")
   .action(async () => {
     const config = getConfig();
-    console.log(chalk.bold("grok-cli doctor\n"));
+    console.log(chalk.bold("grok-agent doctor\n"));
     console.log(chalk.bold("API Key: ") + chalk.green("set") + chalk.dim(` (${config.apiKey.slice(0, 8)}...)`));
     console.log(chalk.bold("Management Key: ") + (config.managementApiKey ? chalk.green("set") : chalk.dim("not set")));
     console.log(chalk.bold("Base URL: ") + config.baseUrl);
@@ -1123,7 +1123,7 @@ program.command("config").description("Show or edit configuration")
     }
 
     console.log(chalk.bold("Configuration:\n"));
-    console.log(chalk.dim(`Config file: ${fs.existsSync(configPath) ? configPath : "not found (run: grok-cli config --init)"}`));
+    console.log(chalk.dim(`Config file: ${fs.existsSync(configPath) ? configPath : "not found (run: grok-agent config --init)"}`));
     console.log(chalk.dim(`Model: ${config.model}`));
     console.log(chalk.dim(`Approval: ${config.approvalPolicy}`));
     console.log(chalk.dim(`Sandbox: ${config.sandboxMode}`));

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to grok-cli will be documented in this file.
+All notable changes to grok-agent will be documented in this file.
 
 ## [Unreleased]
 
@@ -13,7 +13,7 @@ All notable changes to grok-cli will be documented in this file.
 - Batch API helpers: `batch create`, `list`, `status`, `requests`, `results`, `cancel`, `add-chat`, and `add-jsonl`.
 - Realtime API helper: `realtime secret`.
 - Session lifecycle commands: `archive`, `unarchive`, `rename`, `rollback`, and `compact`.
-- Review mode: `grok-cli review` for uncommitted diffs, base branches, and commits.
+- Review mode: `grok-agent review` for uncommitted diffs, base branches, and commits.
 - Sandbox modes and per-tool approval overrides.
 - TTS voice listing and streaming TTS support.
 - New unit coverage for server-tool serialization and approval policy behavior.
@@ -50,15 +50,15 @@ All notable changes to grok-cli will be documented in this file.
 
 ### Added
 
-- **`grok-cli models`**: List all available models from `/v1/models`. `models info <id>` for details.
-- **`grok-cli doctor`**: Diagnostics — validates API key, shows permissions, checks config and project context.
-- **`grok-cli config`**: Configuration management. `config --init` creates `~/.grok-cli/config.json` with defaults.
-- **`grok-cli tokenize`**: Count tokens via xAI's tokenizer API. Estimate costs before running.
-- **`grok-cli generate-video`** / **`video`**: Generate videos with `grok-imagine-video` (1-15s, multiple aspect ratios).
-- **`grok-cli speak`** / **`tts`**: Text-to-speech with 4 voices (eve, ara, sal, rex). Output to file or stdout.
-- **`grok-cli collections`**: Manage persistent document collections for RAG (list, create).
+- **`grok-agent models`**: List all available models from `/v1/models`. `models info <id>` for details.
+- **`grok-agent doctor`**: Diagnostics — validates API key, shows permissions, checks config and project context.
+- **`grok-agent config`**: Configuration management. `config --init` creates `~/.grok-agent/config.json` with defaults.
+- **`grok-agent tokenize`**: Count tokens via xAI's tokenizer API. Estimate costs before running.
+- **`grok-agent generate-video`** / **`video`**: Generate videos with `grok-imagine-video` (1-15s, multiple aspect ratios).
+- **`grok-agent speak`** / **`tts`**: Text-to-speech with 4 voices (eve, ara, sal, rex). Output to file or stdout.
+- **`grok-agent collections`**: Manage persistent document collections for RAG (list, create).
 - **Approval system**: `--approve` prompts before writes/exec. `--deny-writes` blocks them entirely. Approvals cached per session.
-- **Config file**: `~/.grok-cli/config.json` for persistent settings (model, approval policy, MCP servers, hooks, etc.).
+- **Config file**: `~/.grok-agent/config.json` for persistent settings (model, approval policy, MCP servers, hooks, etc.).
 - **Project context files**: Automatically loads `GROK.md` or `.grokrc` from the project directory into the system prompt. Like CLAUDE.md for Grok.
 - **Diff display**: File edits show unified diffs with red/green coloring. Disable with `--no-diffs`.
 - **Prompt cache routing**: `x-grok-conv-id` header for sticky server routing — cached tokens cost 10x less.
@@ -78,7 +78,7 @@ All notable changes to grok-cli will be documented in this file.
 - **Image generation**: `generate-image` / `imagine` subcommand creates images via `grok-imagine-image` and `grok-imagine-image-pro`.
 - **grok-code-fast-1**: `--code` flag selects the specialized coding model (4x faster, 1/10th cost, optimized for tool-heavy agentic work).
 - **File attachments**: `--attach <file>` uploads files (PDFs, docs, CSVs) to xAI for Grok to search and reference.
-- **Pipe mode**: `echo "prompt" | grok-cli` reads from stdin when piped. Combine with `cat`, `git diff`, etc.
+- **Pipe mode**: `echo "prompt" | grok-agent` reads from stdin when piped. Combine with `cat`, `git diff`, etc.
 - **Token usage tracking**: `--show-usage` displays input/output/reasoning/cached token counts and estimated cost.
 - **Citation display**: Web search and X search results show source URLs. Disable with `--no-citations`.
 - **Structured outputs**: `--json-schema <schema>` forces Grok to return valid JSON matching the provided schema.
@@ -96,18 +96,18 @@ All notable changes to grok-cli will be documented in this file.
 
 ### Added
 
-- Initial release of grok-cli.
-- **Exec mode**: run a prompt non-interactively (`grok-cli "prompt"`).
-- **Interactive REPL**: multi-turn conversations with `grok-cli`.
+- Initial release of grok-agent.
+- **Exec mode**: run a prompt non-interactively (`grok-agent "prompt"`).
+- **Interactive REPL**: multi-turn conversations with `grok-agent`.
 - **Streaming**: real-time response output via SSE.
 - **7 local tools**: bash, read_file, write_file, edit_file, glob, grep, list_directory.
 - **Agent tool loop**: Grok autonomously calls tools, executes locally, feeds results back.
-- **Session persistence**: JSONL files in `~/.grok-cli/sessions/`.
+- **Session persistence**: JSONL files in `~/.grok-agent/sessions/`.
 - **Session resume**: `-r <session-id>` to continue any previous session.
 - **Session management**: `sessions list`, `sessions show`, `sessions delete`, `sessions clear`.
 - **Model selection**: `--fast`, `--reasoning`, `--non-reasoning` flags.
 - **xAI Responses API**: stateful multi-turn with `previous_response_id`.
 - **xAI server-side tools**: `--web-search`, `--x-search`, `--code-execution`.
 - **Rate limit handling**: automatic retry with backoff on 429 errors.
-- **Global install**: `npm link` for system-wide `grok-cli` command.
+- **Global install**: `npm link` for system-wide `grok-agent` command.
 - **Windows support**: file:// URL handling for ESM on Windows.

@@ -1,18 +1,49 @@
 {
-  "name": "grok-cli",
-  "version": "0.4.0",
+  "name": "grok-agent",
+  "version": "0.5.0",
   "description": "A coding assistant CLI powered by xAI's Grok models",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "grok-cli": "./bin/grok-cli.js"
+    "grok-agent": "./bin/grok-cli.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "tsc -p tsconfig.test.json && node --test dist-tests/tests/*.test.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepare": "npm run build"
   },
+  "keywords": [
+    "grok",
+    "xai",
+    "cli",
+    "coding-assistant",
+    "agent",
+    "ai",
+    "llm",
+    "developer-tools",
+    "code-generation",
+    "function-calling"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/baba20o/grok-cli.git"
+  },
+  "homepage": "https://github.com/baba20o/grok-cli#readme",
+  "bugs": {
+    "url": "https://github.com/baba20o/grok-cli/issues"
+  },
+  "author": "baba20o",
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
