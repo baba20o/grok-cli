@@ -2,6 +2,29 @@
 
 All notable changes to grok-cli will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Typed server-side tool configuration for web search, X search, code execution, file search, and MCP.
+- Web search and X search filters: allowed/excluded domains, X handles, date ranges, and image/video understanding flags.
+- Collection-backed file search on the main chat path via `--collection` and `--file-search-mode`.
+- Expanded `collections` command set: `get`, `update`, `delete`, `docs`, `upload`, `rm-doc`, and `search`.
+- Batch API helpers: `batch create`, `list`, `status`, `requests`, `results`, `cancel`, `add-chat`, and `add-jsonl`.
+- Realtime API helper: `realtime secret`.
+- Session lifecycle commands: `archive`, `unarchive`, `rename`, `rollback`, and `compact`.
+- Review mode: `grok-cli review` for uncommitted diffs, base branches, and commits.
+- Sandbox modes and per-tool approval overrides.
+- TTS voice listing and streaming TTS support.
+- New unit coverage for server-tool serialization and approval policy behavior.
+
+### Changed
+
+- Responses API requests now serialize local function tools in xAI's native Responses format.
+- Session storage now tracks archived sessions and preserves pre-turn setup messages when rolling back turns.
+- Config loading now supports management API settings, MCP metadata, typed server tools, sandbox defaults, and tool approval overrides.
+- README and command help were updated to match the expanded CLI surface.
+
 ## [0.4.0] - 2026-03-29
 
 ### Added

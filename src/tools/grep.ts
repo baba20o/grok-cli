@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 const MAX_RESULTS = 100;
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
@@ -12,9 +14,11 @@ export async function executeGrep(args: {
   include?: string;
   ignore_case?: boolean;
   max_results?: number;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const searchPath = args.path ? path.resolve(projectCwd, args.path) : projectCwd;
   const maxResults = Math.min(args.max_results || MAX_RESULTS, 500);
+  const sandboxError = ensurePathAllowed(searchPath, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  if (sandboxError) return sandboxError;
 
   try {
     const regex = new RegExp(args.pattern, args.ignore_case ? "gi" : "g");

@@ -24,6 +24,7 @@ import { checkApproval } from "./approvals.js";
 import { runHooks } from "./hooks.js";
 import { needsCompaction, compactConversation } from "./compaction.js";
 import { formatApiError } from "./cli-errors.js";
+import { collectResponseIncludes, serializeServerTools } from "./server-tools.js";
 import {
   isJsonMode,
   emitSessionStarted,
@@ -31,6 +32,8 @@ import {
   emitTurnCompleted,
   emitToolCall,
   emitToolResult,
+  emitServerToolCall,
+  emitServerToolUsage,
   emitMessage,
   emitError,
   emitSessionCompleted,
@@ -42,7 +45,106 @@ import type {
   AgentOptions,
   SerializedToolCall,
   Citation,
+  SessionEvent,
+  SessionMeta,
 } from "./types.js";
+
+function logServerToolCall(config: GrokConfig, item: any): void {
+  const name = String(item.type || "server_tool").replace("_call", "");
+  const payload: Record<string, unknown> = {};
+  if (item.id) payload.id = item.id;
+  if (item.name) payload.tool = item.name;
+  if (item.arguments) payload.arguments = item.arguments;
+  emitServerToolCall(name, payload);
+  if (config.showToolCalls) {
+    console.error(chalk.magenta(`  ◆ ${name}`) + chalk.dim(" (server-side)"));
+  }
+}
+
+function logServerToolUsage(config: GrokConfig, response: any): void {
+  const usage = response?.server_side_tool_usage;
+  if (!usage || typeof usage !== "object") return;
+  emitServerToolUsage(usage);
+  if (config.showServerToolUsage) {
+    const summary = Object.entries(usage)
+      .map(([name, count]) => `${name}=${count}`)
+      .join(", ");
+    if (summary) {
+      console.error(chalk.dim(`Server tools: ${summary}`));
+    }
+  }
+}
+
+function countTurns(messages: ChatMessage[]): number {
+  return messages.filter((msg) => (msg as any).role === "user").length;
+}
+
+function sessionEventsFromMessages(meta: SessionMeta, messages: ChatMessage[]): SessionEvent[] {
+  const events: SessionEvent[] = [
+    { ts: meta.updated, type: "meta", meta },
+  ];
+
+  let turn = 0;
+  for (const msg of messages) {
+    const role = (msg as any).role;
+    if (role === "user") turn++;
+
+    const event: SessionEvent = {
+      ts: new Date().toISOString(),
+      type: "msg",
+      role,
+      turn: role === "system" ? undefined : turn,
+      content: typeof (msg as any).content === "string" ? (msg as any).content : JSON.stringify((msg as any).content),
+    };
+    const toolCalls = (msg as any).tool_calls;
+    if (toolCalls) {
+      event.toolCalls = toolCalls.map((tc: any) => ({
+        id: tc.id,
+        name: tc.function?.name || "",
+        arguments: tc.function?.arguments || "",
+      }));
+    }
+    const toolCallId = (msg as any).tool_call_id;
+    if (toolCallId) event.toolCallId = toolCallId;
+    events.push(event);
+  }
+
+  return events;
+}
+
+function rollbackConversationMessages(messages: ChatMessage[], turns: number): ChatMessage[] {
+  if (turns <= 0) return messages;
+  const system = messages[0];
+  const rest = messages.slice(1);
+  const turnGroups: ChatMessage[][] = [];
+  let current: ChatMessage[] = [];
+
+  for (const msg of rest) {
+    if ((msg as any).role === "user") {
+      if (current.length > 0) turnGroups.push(current);
+      current = [msg];
+    } else if (current.length > 0) {
+      current.push(msg);
+    }
+  }
+  if (current.length > 0) turnGroups.push(current);
+
+  const kept = turnGroups.slice(0, Math.max(0, turnGroups.length - turns)).flat();
+  return [system, ...kept];
+}
+
+function serializeClientToolDefinitions(tools: ToolDef[]): any[] {
+  return tools.map((tool) => {
+    const fn = (tool as any).function;
+    if (!fn) return tool;
+    return {
+      type: "function",
+      name: fn.name,
+      description: fn.description,
+      parameters: fn.parameters,
+    };
+  });
+}
 
 // ─── Chat Completions Agent Loop (streaming) ─────────────────────────────────
 
@@ -172,7 +274,7 @@ async function runChatLoop(
       }
 
       // Approval check
-      const approved = await checkApproval(config.approvalPolicy, tc.name, tc.arguments);
+      const approved = await checkApproval(config, tc.name, tc.arguments);
       if (!approved) {
         messages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
         continue;
@@ -181,7 +283,9 @@ async function runChatLoop(
       // Pre-tool hook
       runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: session?.id });
 
-      const result = await executeTool(tc.name, tc.arguments, options.cwd);
+      const result = await executeTool(tc.name, tc.arguments, options.cwd, {
+        sandboxMode: config.sandboxMode,
+      });
       if (config.showToolCalls) {
         console.error(formatToolResult(result.output, result.error || false));
       }
@@ -223,16 +327,10 @@ async function runResponsesLoop(
   setMaxOutputTokens(config.maxOutputTokens);
 
   // Build tools array
-  const tools: any[] = [];
-  for (const st of config.serverTools) {
-    tools.push({ type: st === "code_execution" ? "code_interpreter" : st });
-  }
-  for (const mcp of config.mcpServers) {
-    tools.push({ type: "mcp", server_url: mcp.url, server_label: mcp.label });
-  }
-  for (const td of toolDefinitions) {
-    tools.push(td);
-  }
+  const tools: any[] = [
+    ...serializeServerTools(config.serverTools, config.mcpServers),
+    ...serializeClientToolDefinitions(toolDefinitions),
+  ];
 
   // Build input content
   const inputContent: any[] = [];
@@ -275,6 +373,8 @@ async function runResponsesLoop(
         tools: tools.length > 0 ? tools : undefined,
         store: true,
       };
+      const responseIncludes = collectResponseIncludes(config.serverTools, config.includeToolOutputs);
+      if (responseIncludes.length > 0) reqParams.include = responseIncludes;
       if (currentResponseId) reqParams.previous_response_id = currentResponseId;
       if (config.jsonSchema) {
         try {
@@ -292,6 +392,7 @@ async function runResponsesLoop(
       const response: any = await (client as any).responses.create(reqParams);
       currentResponseId = response.id;
       if (response?.system_fingerprint) lastFingerprint = response.system_fingerprint;
+      logServerToolUsage(config, response);
 
       // Track usage
       const turnUsage = createUsageStats();
@@ -337,12 +438,10 @@ async function runResponsesLoop(
           item.type === "web_search_call" ||
           item.type === "x_search_call" ||
           item.type === "code_interpreter_call" ||
+          item.type === "file_search_call" ||
           item.type === "mcp_call"
         ) {
-          if (config.showToolCalls) {
-            const name = item.type.replace("_call", "");
-            console.error(chalk.magenta(`  ◆ ${name}`) + chalk.dim(" (server-side)"));
-          }
+          logServerToolCall(config, item);
         }
       }
 
@@ -382,14 +481,16 @@ async function runResponsesLoop(
           console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
         }
 
-        const approved = await checkApproval(config.approvalPolicy, fc.name, fc.arguments);
+        const approved = await checkApproval(config, fc.name, fc.arguments);
         if (!approved) {
           toolOutputs.push({ type: "function_call_output", call_id: fc.call_id, output: "Denied by user." });
           continue;
         }
 
         runHooks(config.hooks, { type: "pre-tool", tool: fc.name, args: fc.arguments, sessionId: session?.id });
-        const result = await executeTool(fc.name, fc.arguments, cwd);
+        const result = await executeTool(fc.name, fc.arguments, cwd, {
+          sandboxMode: config.sandboxMode,
+        });
         if (config.showToolCalls) {
           console.error(formatToolResult(result.output, result.error || false));
         }
@@ -580,6 +681,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
   let sessionId: string | null = null;
   let conversationMessages: ChatMessage[];
   const showOutput = !isJsonMode();
+  let activeModel = config.model;
   const runtimeSessionId = config.ephemeral
     ? `ephemeral-${Date.now().toString(36)}`
     : undefined;
@@ -589,14 +691,15 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
       console.error(chalk.dim("(ephemeral mode ignores --resume)"));
     }
     conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
-    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${config.model}) — ephemeral`));
+    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${activeModel}) — ephemeral`));
   } else if (sessionMgr && options.sessionId && sessionMgr.sessionExists(options.sessionId)) {
     const loaded = sessionMgr.loadSession(options.sessionId);
     if (loaded) {
       sessionId = loaded.meta.id;
+      activeModel = loaded.meta.model || activeModel;
       conversationMessages = loaded.messages;
       console.error(
-        chalk.bold("Grok CLI") + chalk.dim(` (${config.model})`) +
+        chalk.bold("Grok CLI") + chalk.dim(` (${activeModel})`) +
         chalk.green(` — resumed ${sessionId}`)
       );
       console.error(chalk.dim(`Loaded ${loaded.messages.length} messages`));
@@ -611,22 +714,22 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
       throw new Error("Interactive session storage is unavailable.");
     }
     const meta = sessionMgr.createSession({
-      model: config.model, cwd: options.cwd,
+      model: activeModel, cwd: options.cwd,
       name: options.sessionName || "Interactive session",
     });
     sessionId = meta.id;
     conversationMessages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
     sessionMgr.appendMessage(sessionId, "system", buildSystemPrompt(options.cwd, config));
-    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${config.model}) — ${sessionId}`));
+    console.error(chalk.bold("Grok CLI") + chalk.dim(` (${activeModel}) — ${sessionId}`));
   }
 
-  console.error(chalk.dim('Commands: /session /sessions exit\n'));
+  console.error(chalk.dim("Commands: /session /sessions /usage /name /model /archive /compact /rollback /files exit\n"));
 
   const totalUsage = createUsageStats();
   const hookSessionId = sessionId || runtimeSessionId || `ephemeral-${Date.now().toString(36)}`;
 
   runHooks(config.hooks, { type: "session-start", sessionId: hookSessionId });
-  emitSessionStarted(hookSessionId, config.model);
+  emitSessionStarted(hookSessionId, activeModel);
 
   try {
     rl.prompt();
@@ -638,7 +741,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
         if (sessionId) console.error(chalk.dim(`Session saved: ${sessionId}`));
         else console.error(chalk.dim("Session ended (ephemeral)"));
         if (config.showUsage && totalUsage.totalTokens > 0) {
-          console.error(formatUsage(config.model, totalUsage));
+          console.error(formatUsage(activeModel, totalUsage));
         }
         break;
       }
@@ -660,7 +763,84 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
         rl.prompt(); continue;
       }
       if (input === "/usage") {
-        console.error(formatUsage(config.model, totalUsage));
+        console.error(formatUsage(activeModel, totalUsage));
+        rl.prompt(); continue;
+      }
+      if (input.startsWith("/name ")) {
+        const nextName = input.slice("/name ".length).trim();
+        if (!nextName) {
+          console.error(chalk.yellow("Usage: /name <new session name>"));
+        } else if (!sessionId || !sessionMgr) {
+          console.error(chalk.dim("Ephemeral mode has no saved session to rename."));
+        } else {
+          sessionMgr.renameSession(sessionId, nextName);
+          console.error(chalk.green(`Renamed session: ${nextName}`));
+        }
+        rl.prompt(); continue;
+      }
+      if (input === "/model") {
+        console.error(chalk.dim(`Current model: ${activeModel}`));
+        rl.prompt(); continue;
+      }
+      if (input.startsWith("/model ")) {
+        activeModel = input.slice("/model ".length).trim() || activeModel;
+        if (sessionId && sessionMgr) {
+          sessionMgr.updateMeta(sessionId, { model: activeModel });
+        }
+        console.error(chalk.green(`Switched model: ${activeModel}`));
+        rl.prompt(); continue;
+      }
+      if (input === "/archive") {
+        if (!sessionId || !sessionMgr) {
+          console.error(chalk.dim("Ephemeral mode has no saved session to archive."));
+        } else if (sessionMgr.archiveSession(sessionId)) {
+          console.error(chalk.green(`Archived session: ${sessionId}`));
+        } else {
+          console.error(chalk.red(`Unable to archive session: ${sessionId}`));
+        }
+        rl.prompt(); continue;
+      }
+      if (input === "/compact") {
+        conversationMessages = await compactConversation(config, conversationMessages);
+        if (sessionId && sessionMgr) {
+          const loaded = sessionMgr.loadSession(sessionId);
+          if (loaded) {
+            loaded.meta.turns = countTurns(conversationMessages);
+            loaded.meta.updated = new Date().toISOString();
+            loaded.meta.model = activeModel;
+            sessionMgr.rewriteSession(sessionId, sessionEventsFromMessages(loaded.meta, conversationMessages));
+          }
+        }
+        console.error(chalk.green("Compacted conversation history."));
+        rl.prompt(); continue;
+      }
+      if (input.startsWith("/rollback")) {
+        const turnsToRollback = parseInt(input.split(/\s+/)[1] || "1", 10);
+        if (Number.isNaN(turnsToRollback) || turnsToRollback < 1) {
+          console.error(chalk.yellow("Usage: /rollback <num-turns>"));
+        } else if (sessionId && sessionMgr) {
+          if (sessionMgr.rollbackTurns(sessionId, turnsToRollback)) {
+            const reloaded = sessionMgr.loadSession(sessionId);
+            if (reloaded) conversationMessages = reloaded.messages;
+            console.error(chalk.green(`Rolled back ${turnsToRollback} turn(s).`));
+          } else {
+            console.error(chalk.red("Rollback failed."));
+          }
+        } else {
+          conversationMessages = rollbackConversationMessages(conversationMessages, turnsToRollback);
+          console.error(chalk.green(`Rolled back ${turnsToRollback} turn(s) in ephemeral memory.`));
+        }
+        rl.prompt(); continue;
+      }
+      if (input.startsWith("/files ")) {
+        const query = input.slice("/files ".length).trim();
+        const result = await executeTool(
+          "glob",
+          JSON.stringify({ pattern: `**/*${query}*` }),
+          options.cwd,
+          { sandboxMode: config.sandboxMode },
+        );
+        console.error(result.output);
         rl.prompt(); continue;
       }
 
@@ -688,7 +868,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
           const client = createClient(config);
 
           const stream = await client.chat.completions.create({
-            model: config.model,
+            model: activeModel,
             messages: conversationMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
             stream: true,
@@ -719,7 +899,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
                 sessionMgr.updateMeta(sessionId, { turns: meta ? meta.meta.turns + turn : turn });
               }
             }
-            if (config.showUsage) console.error(formatUsage(config.model, turnUsage));
+            if (config.showUsage) console.error(formatUsage(activeModel, turnUsage));
             break;
           }
 
@@ -745,14 +925,16 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
             emitToolCall(tc.name, tc.arguments, tc.id);
             if (config.showToolCalls) console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
 
-            const approved = await checkApproval(config.approvalPolicy, tc.name, tc.arguments);
+            const approved = await checkApproval(config, tc.name, tc.arguments);
             if (!approved) {
               conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
               continue;
             }
 
             runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: sessionId || hookSessionId });
-            const result = await executeTool(tc.name, tc.arguments, options.cwd);
+            const result = await executeTool(tc.name, tc.arguments, options.cwd, {
+              sandboxMode: config.sandboxMode,
+            });
             if (config.showToolCalls) console.error(formatToolResult(result.output, result.error || false));
             runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: sessionId || hookSessionId });
             emitToolResult(tc.id, result.output, result.error || false);

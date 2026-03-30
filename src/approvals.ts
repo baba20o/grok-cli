@@ -1,9 +1,7 @@
 import readline from "node:readline";
 import chalk from "chalk";
+import type { ApprovalPolicy, GrokConfig, ToolApprovalMode } from "./types.js";
 
-export type ApprovalPolicy = "always-approve" | "ask" | "deny-writes";
-
-// Cache approvals within a session
 const approvalCache = new Map<string, boolean>();
 
 const ALWAYS_SAFE = new Set(["read_file", "glob", "grep", "list_directory"]);
@@ -12,31 +10,44 @@ const EXEC_TOOLS = new Set(["bash"]);
 
 function cacheKey(tool: string, args: string): string {
   if (tool === "bash") {
-    // Cache by command prefix (first word)
     try {
       const cmd = JSON.parse(args)?.command?.split(" ")[0] || "";
       return `bash:${cmd}`;
-    } catch { return `bash:?`; }
+    } catch {
+      return "bash:?";
+    }
   }
   if (tool === "write_file" || tool === "edit_file") {
-    try { return `${tool}:${JSON.parse(args)?.file_path}`; } catch { return `${tool}:?`; }
+    try {
+      return `${tool}:${JSON.parse(args)?.file_path}`;
+    } catch {
+      return `${tool}:?`;
+    }
   }
   return tool;
 }
 
+function resolveToolApprovalMode(config: Pick<GrokConfig, "approvalPolicy" | "toolApprovals">, toolName: string): ApprovalPolicy | ToolApprovalMode {
+  const override = config.toolApprovals.tools?.[toolName];
+  if (override) return override;
+  return config.toolApprovals.defaultMode || config.approvalPolicy;
+}
+
 export async function checkApproval(
-  policy: ApprovalPolicy,
+  config: Pick<GrokConfig, "approvalPolicy" | "toolApprovals">,
   toolName: string,
   argsJson: string,
 ): Promise<boolean> {
-  // Always-safe tools never need approval
   if (ALWAYS_SAFE.has(toolName)) return true;
 
-  // Always-approve policy skips prompts
-  if (policy === "always-approve") return true;
+  const mode = resolveToolApprovalMode(config, toolName);
+  if (mode === "allow" || mode === "always-approve") return true;
+  if (mode === "deny") {
+    console.error(chalk.red(`  ✗ Blocked by tool approval override: ${toolName}`));
+    return false;
+  }
 
-  // Deny-writes blocks write/exec tools entirely
-  if (policy === "deny-writes") {
+  if (mode === "deny-writes") {
     if (WRITE_TOOLS.has(toolName) || EXEC_TOOLS.has(toolName)) {
       console.error(chalk.red(`  ✗ Blocked by deny-writes policy: ${toolName}`));
       return false;
@@ -44,22 +55,21 @@ export async function checkApproval(
     return true;
   }
 
-  // "ask" policy — check cache first
   const key = cacheKey(toolName, argsJson);
   if (approvalCache.has(key)) return approvalCache.get(key)!;
 
-  // Show what's about to happen
   let summary = toolName;
   try {
     const args = JSON.parse(argsJson);
     if (toolName === "bash") summary = `bash: ${args.command}`;
     else if (toolName === "write_file") summary = `write: ${args.file_path}`;
     else if (toolName === "edit_file") summary = `edit: ${args.file_path}`;
-  } catch {}
+  } catch {
+    // Ignore parse errors in prompt summary.
+  }
 
-  // Prompt user
   const answer = await promptUser(
-    chalk.yellow(`  ⚠ Approve ${summary}? `) + chalk.dim("[y]es / [n]o / [a]lways: ")
+    chalk.yellow(`  ⚠ Approve ${summary}? `) + chalk.dim("[y]es / [n]o / [a]lways: "),
   );
 
   const choice = answer.toLowerCase().trim();

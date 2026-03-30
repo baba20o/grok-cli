@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 const MAX_LINES = 5000;
 
@@ -8,10 +10,12 @@ export async function executeReadFile(args: {
   file_path: string;
   offset?: number;
   limit?: number;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const filePath = path.resolve(projectCwd, args.file_path);
   const offset = Math.max((args.offset || 1) - 1, 0); // Convert 1-based to 0-based
   const limit = Math.min(args.limit || 2000, MAX_LINES);
+  const sandboxError = ensurePathAllowed(filePath, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  if (sandboxError) return sandboxError;
 
   try {
     if (!fs.existsSync(filePath)) {

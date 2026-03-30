@@ -1,14 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 const MAX_ENTRIES = 500;
 
 export async function executeListDir(args: {
   path?: string;
   recursive?: boolean;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const dirPath = args.path ? path.resolve(projectCwd, args.path) : projectCwd;
+  const sandboxError = ensurePathAllowed(dirPath, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  if (sandboxError) return sandboxError;
 
   try {
     if (!fs.existsSync(dirPath)) {

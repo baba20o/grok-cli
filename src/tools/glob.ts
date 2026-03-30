@@ -1,14 +1,18 @@
 import fg from "fast-glob";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 const MAX_RESULTS = 500;
 
 export async function executeGlob(args: {
   pattern: string;
   cwd?: string;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const cwd = args.cwd ? path.resolve(projectCwd, args.cwd) : projectCwd;
+  const sandboxError = ensurePathAllowed(cwd, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  if (sandboxError) return sandboxError;
 
   try {
     const files = await fg(args.pattern, {

@@ -109,6 +109,43 @@ describe("tools", () => {
       assert.ok(result.error);
       assert.ok(result.output.includes("exit code"));
     });
+
+    it("blocks shell execution under workspace-write sandbox", async () => {
+      const result = await executeTool(
+        "bash",
+        JSON.stringify({ command: "echo should_not_run" }),
+        testDir,
+        { sandboxMode: "workspace-write" },
+      );
+      assert.ok(result.error);
+      assert.ok(result.output.includes("Sandbox policy"));
+    });
+  });
+
+  describe("sandboxed file access", () => {
+    it("blocks writes outside the workspace", async () => {
+      const outside = path.resolve(testDir, "..", "outside.txt");
+      const result = await executeTool(
+        "write_file",
+        JSON.stringify({ file_path: outside, content: "nope" }),
+        testDir,
+        { sandboxMode: "workspace-write" },
+      );
+      assert.ok(result.error);
+      assert.ok(result.output.includes("outside the workspace"));
+    });
+
+    it("blocks writes in read-only mode", async () => {
+      const filePath = path.join(testDir, "readonly.txt");
+      const result = await executeTool(
+        "write_file",
+        JSON.stringify({ file_path: filePath, content: "blocked" }),
+        testDir,
+        { sandboxMode: "read-only" },
+      );
+      assert.ok(result.error);
+      assert.ok(result.output.includes("read-only"));
+    });
   });
 
   describe("unknown tool", () => {

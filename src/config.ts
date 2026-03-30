@@ -2,16 +2,26 @@ import { config as loadEnv } from "dotenv";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
-import type { GrokConfig, ServerTool, McpServer, HooksConfig, ConfigFile, ApprovalPolicy } from "./types.js";
+import { normalizeServerTools } from "./server-tools.js";
+import type {
+  ConfigFile,
+  GrokConfig,
+  McpServer,
+  SandboxMode,
+  ServerToolConfig,
+  ServerToolKind,
+} from "./types.js";
 
-// Load .env
 const envPaths = [
   path.join(process.cwd(), ".env"),
   path.join(process.cwd(), "..", ".env"),
   path.join(os.homedir(), ".grok-cli", ".env"),
 ];
 for (const p of envPaths) {
-  if (fs.existsSync(p)) { loadEnv({ path: p }); break; }
+  if (fs.existsSync(p)) {
+    loadEnv({ path: p });
+    break;
+  }
 }
 
 const MODELS = {
@@ -27,7 +37,10 @@ function getBaseDir(): string {
   return process.env.GROK_SESSION_DIR || path.join(os.homedir(), ".grok-cli");
 }
 
-/** Load config file from ~/.grok-cli/config.json */
+function getManagementBaseUrl(): string {
+  return process.env.XAI_MANAGEMENT_BASE_URL || "https://management-api.x.ai/v1";
+}
+
 function loadConfigFile(): ConfigFile {
   const configPath = path.join(getBaseDir(), "config.json");
   if (!fs.existsSync(configPath)) return {};
@@ -38,36 +51,62 @@ function loadConfigFile(): ConfigFile {
   }
 }
 
+function normalizeMcpServers(value: ConfigFile["mcp_servers"] | undefined): McpServer[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((server) => ({
+      label: server.label,
+      url: server.url,
+      description: server.description,
+      allowedTools: server.allowedTools || [],
+    }));
+  }
+  return Object.entries(value).map(([label, url]) => ({ label, url }));
+}
+
+function mergeMcpServers(primary: McpServer[], secondary: McpServer[]): McpServer[] {
+  const merged = [...primary];
+  for (const server of secondary) {
+    const existing = merged.find((entry) => entry.label === server.label || entry.url === server.url);
+    if (!existing) {
+      merged.push({ ...server, allowedTools: server.allowedTools || [] });
+      continue;
+    }
+    existing.description = existing.description || server.description;
+    existing.allowedTools = [
+      ...new Set([...(existing.allowedTools || []), ...(server.allowedTools || [])]),
+    ];
+  }
+  return merged;
+}
+
 export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
   const fileConfig = loadConfigFile();
   const apiKey = overrides.apiKey || process.env.XAI_API_KEY || process.env.xAI_API_KEY || "";
+  const managementApiKey =
+    overrides.managementApiKey ||
+    fileConfig.management_api_key ||
+    process.env.XAI_MANAGEMENT_API_KEY ||
+    process.env.GROK_MANAGEMENT_API_KEY ||
+    "";
 
   if (!apiKey) {
     console.error(
       "Error: XAI_API_KEY not set.\n" +
       "Get one at https://console.x.ai/team/default/api-keys\n" +
-      "Then: export XAI_API_KEY=your_key_here"
+      "Then: export XAI_API_KEY=your_key_here",
     );
     process.exit(1);
   }
 
-  // Merge MCP servers from config file
-  const mcpServers: McpServer[] = overrides.mcpServers || [];
-  if (fileConfig.mcp_servers) {
-    for (const [label, url] of Object.entries(fileConfig.mcp_servers)) {
-      if (!mcpServers.some(m => m.url === url)) {
-        mcpServers.push({ label, url });
-      }
-    }
-  }
+  const fileMcpServers = normalizeMcpServers(fileConfig.mcp_servers);
+  const mcpServers = mergeMcpServers(fileMcpServers, overrides.mcpServers || []);
 
-  // Merge server tools from config file
-  const serverTools: ServerTool[] = overrides.serverTools || [];
-  if (fileConfig.server_tools) {
-    for (const st of fileConfig.server_tools) {
-      if (!serverTools.includes(st)) serverTools.push(st);
-    }
-  }
+  const fileServerTools = normalizeServerTools(fileConfig.server_tools);
+  const overrideServerTools = normalizeServerTools(
+    overrides.serverTools as Array<ServerToolKind | ServerToolConfig> | undefined,
+  );
+  const serverTools = normalizeServerTools([...fileServerTools, ...overrideServerTools]);
 
   const needsResponsesApi =
     overrides.useResponsesApi ||
@@ -75,9 +114,18 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     mcpServers.length > 0 ||
     (overrides.fileAttachments && overrides.fileAttachments.length > 0);
 
+  const sandboxMode =
+    overrides.sandboxMode ||
+    fileConfig.sandbox_mode ||
+    (process.env.GROK_SANDBOX_MODE as SandboxMode | undefined) ||
+    "danger-full-access";
+
   return {
     apiKey,
+    managementApiKey,
     baseUrl: overrides.baseUrl || process.env.XAI_BASE_URL || "https://api.x.ai/v1",
+    managementBaseUrl:
+      overrides.managementBaseUrl || fileConfig.management_base_url || getManagementBaseUrl(),
     model: overrides.model || fileConfig.model || process.env.GROK_MODEL || MODELS.default,
     maxTokens: overrides.maxTokens || 16384,
     timeout: overrides.timeout || 600_000,
@@ -87,6 +135,8 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     showUsage: overrides.showUsage ?? fileConfig.show_usage ?? false,
     showCitations: overrides.showCitations ?? fileConfig.show_citations ?? true,
     showDiffs: overrides.showDiffs ?? fileConfig.show_diffs ?? true,
+    showServerToolUsage:
+      overrides.showServerToolUsage ?? fileConfig.show_server_tool_usage ?? false,
     maxToolRounds: overrides.maxToolRounds || fileConfig.max_turns || 50,
     serverTools,
     useResponsesApi: !!needsResponsesApi,
@@ -96,6 +146,16 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     fileAttachments: overrides.fileAttachments || [],
     jsonSchema: overrides.jsonSchema || null,
     approvalPolicy: overrides.approvalPolicy || fileConfig.approval_policy || "always-approve",
+    sandboxMode,
+    toolApprovals: {
+      defaultMode: overrides.toolApprovals?.defaultMode || fileConfig.tool_approvals?.defaultMode,
+      tools: {
+        ...(fileConfig.tool_approvals?.tools || {}),
+        ...(overrides.toolApprovals?.tools || {}),
+      },
+    },
+    includeToolOutputs:
+      overrides.includeToolOutputs ?? fileConfig.include_tool_outputs ?? false,
     notify: overrides.notify ?? fileConfig.notify ?? false,
     hooks: overrides.hooks || fileConfig.hooks || {},
     convId: overrides.convId || null,

@@ -58,6 +58,14 @@ export function emitMessage(content: string): void {
   emitEvent({ type: "message", content });
 }
 
+export function emitServerToolCall(name: string, payload?: Record<string, unknown>): void {
+  emitEvent({ type: "server_tool.called", name, ...(payload || {}) });
+}
+
+export function emitServerToolUsage(usage: Record<string, number>): void {
+  emitEvent({ type: "server_tool.usage", usage });
+}
+
 export function emitError(message: string): void {
   emitEvent({ type: "error", message });
 }

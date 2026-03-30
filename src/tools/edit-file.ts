@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
 import { showDiff } from "../diff.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 let showDiffsEnabled = true;
 export function setShowDiffs(enabled: boolean): void { showDiffsEnabled = enabled; }
@@ -11,8 +13,10 @@ export async function executeEditFile(args: {
   old_string: string;
   new_string: string;
   replace_all?: boolean;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const filePath = path.resolve(projectCwd, args.file_path);
+  const sandboxError = ensurePathAllowed(filePath, projectCwd, options.sandboxMode || "danger-full-access", "write");
+  if (sandboxError) return sandboxError;
 
   try {
     if (!fs.existsSync(filePath)) {

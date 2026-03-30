@@ -8,10 +8,15 @@ import { executeGlob } from "./glob.js";
 import { executeGrep } from "./grep.js";
 import { executeListDir } from "./list-dir.js";
 import { truncateOutput } from "../truncation.js";
+import type { SandboxMode } from "../types.js";
 
 export { toolDefinitions };
 
-type ToolExecutor = (args: any, cwd: string) => Promise<ToolResult>;
+export interface ToolExecutionOptions {
+  sandboxMode?: SandboxMode;
+}
+
+type ToolExecutor = (args: any, cwd: string, options: ToolExecutionOptions) => Promise<ToolResult>;
 
 const executors: Record<string, ToolExecutor> = {
   bash: executeBash,
@@ -30,6 +35,7 @@ export async function executeTool(
   name: string,
   argsJson: string,
   cwd: string,
+  options: ToolExecutionOptions = {},
 ): Promise<ToolResult> {
   const executor = executors[name];
   if (!executor) {
@@ -38,7 +44,7 @@ export async function executeTool(
 
   try {
     const args = JSON.parse(argsJson);
-    const result = await executor(args, cwd);
+    const result = await executor(args, cwd, options);
     // Truncate large outputs to prevent context window blowup
     result.output = truncateOutput(result.output, maxOutputTokens);
     return result;

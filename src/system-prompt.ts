@@ -1,6 +1,7 @@
 import os from "node:os";
 import type { GrokConfig } from "./types.js";
 import { loadProjectContext } from "./project-context.js";
+import { describeServerTools } from "./server-tools.js";
 
 export function buildSystemPrompt(cwd: string, config?: GrokConfig): string {
   const platform = os.platform();
@@ -26,15 +27,15 @@ You have local tools that execute on the user's machine:
 - **list_directory**: List files and directories.`;
 
   if (config) {
-    const caps: string[] = [];
-    if (config.serverTools.includes("web_search")) caps.push("web search");
-    if (config.serverTools.includes("x_search")) caps.push("X/Twitter search");
-    if (config.serverTools.includes("code_execution")) caps.push("Python code execution (sandbox)");
+    const caps: string[] = [...describeServerTools(config.serverTools)];
     if (config.mcpServers.length > 0) {
       caps.push(`remote MCP tools (${config.mcpServers.map(s => s.label).join(", ")})`);
     }
     if (caps.length > 0) {
       prompt += `\n\nServer-side tools (auto-executed by xAI): ${caps.join(", ")}`;
+    }
+    if (config.sandboxMode !== "danger-full-access") {
+      prompt += `\n\nLocal tool sandbox mode: ${config.sandboxMode}. Prefer structured file tools when shell access is restricted.`;
     }
     if (config.imageInputs.length > 0) {
       prompt += `\n\nThe user has attached ${config.imageInputs.length} image(s) for analysis.`;

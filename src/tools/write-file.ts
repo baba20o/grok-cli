@@ -1,12 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensurePathAllowed } from "./policy.js";
 
 export async function executeWriteFile(args: {
   file_path: string;
   content: string;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const filePath = path.resolve(projectCwd, args.file_path);
+  const sandboxError = ensurePathAllowed(filePath, projectCwd, options.sandboxMode || "danger-full-access", "write");
+  if (sandboxError) return sandboxError;
 
   // Safety: block writing to sensitive paths
   const basename = path.basename(filePath).toLowerCase();

@@ -7,7 +7,9 @@ export type StreamChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 
 export interface GrokConfig {
   apiKey: string;
+  managementApiKey: string;
   baseUrl: string;
+  managementBaseUrl: string;
   model: string;
   maxTokens: number;
   timeout: number;
@@ -17,8 +19,9 @@ export interface GrokConfig {
   showUsage: boolean;
   showCitations: boolean;
   showDiffs: boolean;
+  showServerToolUsage: boolean;
   maxToolRounds: number;
-  serverTools: ServerTool[];
+  serverTools: ServerToolConfig[];
   useResponsesApi: boolean;
   sessionDir: string;
   mcpServers: McpServer[];
@@ -26,6 +29,9 @@ export interface GrokConfig {
   fileAttachments: string[];
   jsonSchema: string | null;
   approvalPolicy: ApprovalPolicy;
+  sandboxMode: SandboxMode;
+  toolApprovals: ToolApprovalSettings;
+  includeToolOutputs: boolean;
   notify: boolean;
   hooks: HooksConfig;
   convId: string | null;
@@ -37,11 +43,59 @@ export interface GrokConfig {
 }
 
 export type ApprovalPolicy = "always-approve" | "ask" | "deny-writes";
-export type ServerTool = "web_search" | "x_search" | "code_execution";
+export type SandboxMode = "danger-full-access" | "workspace-write" | "read-only";
+export type ToolApprovalMode = "allow" | "ask" | "deny";
+export type ServerToolKind = "web_search" | "x_search" | "code_execution" | "file_search";
+
+export interface WebSearchToolConfig {
+  type: "web_search";
+  filters?: {
+    allowedDomains?: string[];
+    excludedDomains?: string[];
+  };
+  enableImageUnderstanding?: boolean;
+  includeSources?: boolean;
+}
+
+export interface XSearchToolConfig {
+  type: "x_search";
+  allowedXHandles?: string[];
+  excludedXHandles?: string[];
+  fromDate?: string;
+  toDate?: string;
+  enableImageUnderstanding?: boolean;
+  enableVideoUnderstanding?: boolean;
+}
+
+export interface CodeExecutionToolConfig {
+  type: "code_execution";
+  includeOutputs?: boolean;
+}
+
+export interface FileSearchToolConfig {
+  type: "file_search";
+  collectionIds: string[];
+  retrievalMode?: "keyword" | "semantic" | "hybrid";
+  maxNumResults?: number;
+  includeResults?: boolean;
+}
+
+export type ServerToolConfig =
+  | WebSearchToolConfig
+  | XSearchToolConfig
+  | CodeExecutionToolConfig
+  | FileSearchToolConfig;
 
 export interface McpServer {
   url: string;
   label: string;
+  description?: string;
+  allowedTools?: string[];
+}
+
+export interface ToolApprovalSettings {
+  defaultMode?: ToolApprovalMode;
+  tools?: Record<string, ToolApprovalMode>;
 }
 
 export interface HooksConfig {
@@ -64,6 +118,7 @@ export interface SessionMeta {
   name: string;
   model: string;
   cwd: string;
+  archived?: boolean;
   created: string;
   updated: string;
   turns: number;
@@ -82,6 +137,7 @@ export interface SessionEvent {
   toolArgs?: string;
   toolOutput?: string;
   toolError?: boolean;
+  turn?: number;
 }
 
 export interface SerializedToolCall {
@@ -110,13 +166,19 @@ export interface Citation {
 export interface ConfigFile {
   model?: string;
   approval_policy?: ApprovalPolicy;
+  sandbox_mode?: SandboxMode;
   show_reasoning?: boolean;
   show_usage?: boolean;
   show_diffs?: boolean;
   show_citations?: boolean;
+  show_server_tool_usage?: boolean;
   notify?: boolean;
   max_turns?: number;
-  mcp_servers?: Record<string, string>; // label -> url
+  management_api_key?: string;
+  management_base_url?: string;
+  mcp_servers?: Record<string, string> | McpServer[];
   hooks?: HooksConfig;
-  server_tools?: ServerTool[];
+  tool_approvals?: ToolApprovalSettings;
+  include_tool_outputs?: boolean;
+  server_tools?: Array<ServerToolKind | ServerToolConfig>;
 }

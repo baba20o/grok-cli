@@ -66,6 +66,33 @@ describe("SessionManager", () => {
     assert.ok(longName.endsWith("..."));
   });
 
+  it("archives and restores a session", () => {
+    const meta = mgr.createSession({ model: "test-model", cwd: "/tmp", name: "Archive Me" });
+    assert.ok(mgr.archiveSession(meta.id));
+    const archived = mgr.listSessions({ archived: true });
+    assert.ok(archived.some((session) => session.id === meta.id && session.archived));
+    assert.ok(mgr.unarchiveSession(meta.id));
+    const active = mgr.listSessions();
+    assert.ok(active.some((session) => session.id === meta.id && !session.archived));
+  });
+
+  it("rolls back the last turn", () => {
+    const meta = mgr.createSession({ model: "test-model", cwd: "/tmp", name: "Rollback" });
+    mgr.appendMessage(meta.id, "system", "system");
+    mgr.appendMessage(meta.id, "user", "turn one");
+    mgr.appendMessage(meta.id, "assistant", "answer one");
+    mgr.appendMessage(meta.id, "user", "turn two");
+    mgr.appendMessage(meta.id, "assistant", "answer two");
+    mgr.updateMeta(meta.id, { turns: 2 });
+
+    assert.ok(mgr.rollbackTurns(meta.id, 1));
+    const loaded = mgr.loadSession(meta.id);
+    assert.ok(loaded);
+    assert.strictEqual(loaded.meta.turns, 1);
+    assert.strictEqual(loaded.messages.length, 3);
+    assert.strictEqual((loaded.messages[2] as any).content, "answer one");
+  });
+
   it("clears all sessions", () => {
     mgr.createSession({ model: "m", cwd: "/tmp" });
     mgr.createSession({ model: "m", cwd: "/tmp" });

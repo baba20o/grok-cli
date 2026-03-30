@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process";
 import type { ToolResult } from "../types.js";
+import type { ToolExecutionOptions } from "./index.js";
+import { ensureCommandAllowed } from "./policy.js";
 
 const MAX_TIMEOUT = 300_000; // 5 minutes
 const DEFAULT_TIMEOUT = 30_000; // 30 seconds
@@ -9,9 +11,11 @@ export async function executeBash(args: {
   command: string;
   timeout?: number;
   cwd?: string;
-}, projectCwd: string): Promise<ToolResult> {
+}, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const timeout = Math.min(args.timeout || DEFAULT_TIMEOUT, MAX_TIMEOUT);
   const cwd = args.cwd || projectCwd;
+  const sandboxError = ensureCommandAllowed(options.sandboxMode || "danger-full-access");
+  if (sandboxError) return sandboxError;
 
   try {
     const output = execSync(args.command, {
