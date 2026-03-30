@@ -189,7 +189,7 @@ program
       includeToolOutputs:
         hasCliValue("includeToolOutputs") ? opts.includeToolOutputs || false : undefined,
       notify: hasCliValue("notify") ? opts.notify || false : undefined,
-      jsonOutput: hasCliValue("json") ? opts.json || false : undefined,
+      jsonOutput: !!opts.json,
       ephemeral: hasCliValue("ephemeral") ? opts.ephemeral || false : undefined,
       outputFile: hasCliValue("output") ? opts.output || null : undefined,
       color: hasCliValue("color") ? opts.color || "auto" : undefined,
@@ -292,6 +292,13 @@ program
         notify("grok-cli", "Task completed");
       }
     } else {
+      if (config.jsonOutput) {
+        await fatalExit(
+          "JSON mode requires a non-interactive prompt",
+          new Error("interactive_json_unsupported"),
+          false,
+        );
+      }
       try {
         await runInteractive(config, agentOpts);
       } catch (err: any) {

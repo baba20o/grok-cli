@@ -58,6 +58,10 @@ export function emitMessage(content: string): void {
   emitEvent({ type: "message", content });
 }
 
+export function emitCitations(citations: Array<{ url: string; title?: string }>): void {
+  emitEvent({ type: "citations", citations });
+}
+
 export function emitServerToolCall(name: string, payload?: Record<string, unknown>): void {
   emitEvent({ type: "server_tool.called", name, ...(payload || {}) });
 }

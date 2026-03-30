@@ -82,6 +82,7 @@ function mergeMcpServers(primary: McpServer[], secondary: McpServer[]): McpServe
 
 export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
   const fileConfig = loadConfigFile();
+  const jsonOutput = overrides.jsonOutput ?? false;
   const apiKey = overrides.apiKey || process.env.XAI_API_KEY || process.env.xAI_API_KEY || "";
   const managementApiKey =
     overrides.managementApiKey ||
@@ -131,7 +132,7 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     timeout: overrides.timeout || 600_000,
     reasoningEffort: overrides.reasoningEffort || "high",
     showReasoning: overrides.showReasoning ?? fileConfig.show_reasoning ?? false,
-    showToolCalls: overrides.showToolCalls ?? true,
+    showToolCalls: jsonOutput ? false : (overrides.showToolCalls ?? true),
     showUsage: overrides.showUsage ?? fileConfig.show_usage ?? false,
     showCitations: overrides.showCitations ?? fileConfig.show_citations ?? true,
     showDiffs: overrides.showDiffs ?? fileConfig.show_diffs ?? true,
@@ -159,7 +160,7 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     notify: overrides.notify ?? fileConfig.notify ?? false,
     hooks: overrides.hooks || fileConfig.hooks || {},
     convId: overrides.convId || null,
-    jsonOutput: overrides.jsonOutput ?? false,
+    jsonOutput,
     ephemeral: overrides.ephemeral ?? false,
     outputFile: overrides.outputFile || null,
     color: overrides.color || "auto",

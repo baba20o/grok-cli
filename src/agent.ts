@@ -26,6 +26,12 @@ import { needsCompaction, compactConversation } from "./compaction.js";
 import { formatApiError } from "./cli-errors.js";
 import { collectResponseIncludes, serializeServerTools } from "./server-tools.js";
 import {
+  extractCitationsFromContent,
+  extractServerToolUsage,
+  getServerToolEvent,
+  sanitizeResponseText,
+} from "./response-utils.js";
+import {
   isJsonMode,
   emitSessionStarted,
   emitTurnStarted,
@@ -34,6 +40,7 @@ import {
   emitToolResult,
   emitServerToolCall,
   emitServerToolUsage,
+  emitCitations,
   emitMessage,
   emitError,
   emitSessionCompleted,
@@ -50,22 +57,19 @@ import type {
 } from "./types.js";
 
 function logServerToolCall(config: GrokConfig, item: any): void {
-  const name = String(item.type || "server_tool").replace("_call", "");
-  const payload: Record<string, unknown> = {};
-  if (item.id) payload.id = item.id;
-  if (item.name) payload.tool = item.name;
-  if (item.arguments) payload.arguments = item.arguments;
-  emitServerToolCall(name, payload);
-  if (config.showToolCalls) {
-    console.error(chalk.magenta(`  ◆ ${name}`) + chalk.dim(" (server-side)"));
+  const event = getServerToolEvent(item);
+  if (!event) return;
+  emitServerToolCall(event.name, event.payload);
+  if (config.showToolCalls && !isJsonMode()) {
+    console.error(chalk.magenta(`  ◆ ${event.name}`) + chalk.dim(" (server-side)"));
   }
 }
 
 function logServerToolUsage(config: GrokConfig, response: any): void {
-  const usage = response?.server_side_tool_usage;
+  const usage = extractServerToolUsage(response);
   if (!usage || typeof usage !== "object") return;
   emitServerToolUsage(usage);
-  if (config.showServerToolUsage) {
+  if (config.showServerToolUsage && !isJsonMode()) {
     const summary = Object.entries(usage)
       .map(([name, count]) => `${name}=${count}`)
       .join(", ");
@@ -159,8 +163,9 @@ async function runChatLoop(
   let turn = 0;
   const totalUsage = createUsageStats();
   let lastFingerprint: string | null = null;
+  const jsonMode = isJsonMode();
   setMaxOutputTokens(config.maxOutputTokens);
-  const showOutput = !isJsonMode();
+  const showOutput = !jsonMode;
 
   // Add structured output if requested
   const extraParams: any = {};
@@ -172,7 +177,7 @@ async function runChatLoop(
         json_schema: { name: "output", schema, strict: true },
       };
     } catch {
-      console.error(chalk.yellow("Invalid JSON schema, ignoring --json-schema"));
+      if (!jsonMode) console.error(chalk.yellow("Invalid JSON schema, ignoring --json-schema"));
     }
   }
 
@@ -180,7 +185,7 @@ async function runChatLoop(
     turn++;
     emitTurnStarted(turn);
 
-    if (options.verbose && turn > 1) {
+    if (options.verbose && turn > 1 && !jsonMode) {
       console.error(chalk.dim(`\n--- turn ${turn} ---`));
     }
 
@@ -214,14 +219,14 @@ async function runChatLoop(
       }
     } catch (err: any) {
       if (err?.status === 429) {
-        console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
+        if (!jsonMode) console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
         await sleep(5000);
         turn--;
         continue;
       }
       if (err?.status === 401) {
         emitError("Authentication failed");
-        console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
+        if (!jsonMode) console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
         process.exit(1);
       }
       throw err;
@@ -237,7 +242,7 @@ async function runChatLoop(
         session.manager.appendMessage(session.id, "assistant", acc.content);
         session.manager.updateMeta(session.id, { turns: turn });
       }
-      if (config.showUsage) {
+      if (config.showUsage && !jsonMode) {
         console.error(formatUsage(config.model, totalUsage));
       }
       return acc.content;
@@ -269,7 +274,7 @@ async function runChatLoop(
 
     for (const tc of serializedCalls) {
       emitToolCall(tc.name, tc.arguments, tc.id);
-      if (config.showToolCalls) {
+      if (config.showToolCalls && !jsonMode) {
         console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
       }
 
@@ -286,7 +291,7 @@ async function runChatLoop(
       const result = await executeTool(tc.name, tc.arguments, options.cwd, {
         sandboxMode: config.sandboxMode,
       });
-      if (config.showToolCalls) {
+      if (config.showToolCalls && !jsonMode) {
         console.error(formatToolResult(result.output, result.error || false));
       }
 
@@ -302,9 +307,9 @@ async function runChatLoop(
     }
   }
 
-  console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
-  if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
-  if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
+  if (!jsonMode) console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
+  if (config.showUsage && !jsonMode) console.error(formatUsage(config.model, totalUsage));
+  if (lastFingerprint && options.verbose && !jsonMode) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
   return "";
 }
 
@@ -323,7 +328,8 @@ async function runResponsesLoop(
   const cwd = options.cwd;
   const totalUsage = createUsageStats();
   let lastFingerprint: string | null = null;
-  const showOutput = !isJsonMode();
+  const jsonMode = isJsonMode();
+  const showOutput = !jsonMode;
   setMaxOutputTokens(config.maxOutputTokens);
 
   // Build tools array
@@ -362,7 +368,7 @@ async function runResponsesLoop(
   while (turn < options.maxTurns) {
     turn++;
     emitTurnStarted(turn);
-    if (options.verbose && turn > 1) {
+    if (options.verbose && turn > 1 && !jsonMode) {
       console.error(chalk.dim(`\n--- turn ${turn} ---`));
     }
 
@@ -416,41 +422,30 @@ async function runResponsesLoop(
         if (item.type === "message") {
           for (const part of item.content) {
             if (part.type === "output_text" || part.type === "text") {
-              textContent += part.text;
-              if (showOutput) process.stdout.write(part.text);
+              const cleanedText = sanitizeResponseText(part.text || "");
+              if (!cleanedText) continue;
+              textContent += cleanedText;
+              if (showOutput) process.stdout.write(cleanedText);
             }
           }
-          // Extract citations from message annotations
-          if (item.content) {
-            for (const part of item.content) {
-              if (part.annotations) {
-                for (const ann of part.annotations) {
-                  if (ann.type === "url_citation" || ann.url) {
-                    citations.push({ url: ann.url, title: ann.title });
-                  }
-                }
-              }
-            }
-          }
+          citations.push(...extractCitationsFromContent(item.content || []));
         } else if (item.type === "function_call") {
           functionCalls.push(item);
-        } else if (
-          item.type === "web_search_call" ||
-          item.type === "x_search_call" ||
-          item.type === "code_interpreter_call" ||
-          item.type === "file_search_call" ||
-          item.type === "mcp_call"
-        ) {
+        } else if (getServerToolEvent(item)) {
           logServerToolCall(config, item);
         }
       }
 
       // Display citations
       if (config.showCitations && citations.length > 0) {
-        console.error(chalk.dim("\n\nSources:"));
-        for (const c of citations.slice(0, 10)) {
-          console.error(chalk.dim(`  ${c.title || c.url}`));
-          if (c.title) console.error(chalk.dim(`    ${c.url}`));
+        if (jsonMode) {
+          emitCitations(citations.slice(0, 10));
+        } else {
+          console.error(chalk.dim("\n\nSources:"));
+          for (const c of citations.slice(0, 10)) {
+            console.error(chalk.dim(`  ${c.title || c.url}`));
+            if (c.title) console.error(chalk.dim(`    ${c.url}`));
+          }
         }
       }
 
@@ -458,8 +453,8 @@ async function runResponsesLoop(
         if (showOutput && textContent) process.stdout.write("\n");
         emitMessage(textContent);
         if (session) session.manager.appendMessage(session.id, "assistant", textContent);
-        if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
-        if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
+        if (config.showUsage && !jsonMode) console.error(formatUsage(config.model, totalUsage));
+        if (lastFingerprint && options.verbose && !jsonMode) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
         return textContent;
       }
 
@@ -477,7 +472,7 @@ async function runResponsesLoop(
       const toolOutputs: any[] = [];
       for (const fc of functionCalls) {
         emitToolCall(fc.name, fc.arguments, fc.call_id);
-        if (config.showToolCalls) {
+        if (config.showToolCalls && !jsonMode) {
           console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
         }
 
@@ -491,7 +486,7 @@ async function runResponsesLoop(
         const result = await executeTool(fc.name, fc.arguments, cwd, {
           sandboxMode: config.sandboxMode,
         });
-        if (config.showToolCalls) {
+        if (config.showToolCalls && !jsonMode) {
           console.error(formatToolResult(result.output, result.error || false));
         }
         runHooks(config.hooks, { type: "post-tool", tool: fc.name, output: result.output, error: result.error, sessionId: session?.id });
@@ -513,19 +508,21 @@ async function runResponsesLoop(
 
     } catch (err: any) {
       if (err?.status === 429) {
-        console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
+        if (!jsonMode) console.error(chalk.yellow("\nRate limited. Waiting 5s..."));
         await sleep(5000);
         turn--;
         continue;
       }
       if (err?.status === 401) {
         emitError("Authentication failed");
-        console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
+        if (!jsonMode) console.error(chalk.red("\nAuth failed. Check XAI_API_KEY."));
         process.exit(1);
       }
       // Fallback to chat.completions if Responses API unavailable
       if (err?.status === 404 || err?.message?.includes("responses")) {
-        console.error(chalk.yellow("\nResponses API unavailable, falling back to chat.completions..."));
+        if (!jsonMode) {
+          console.error(chalk.yellow("\nResponses API unavailable, falling back to chat.completions..."));
+        }
         const msgs: ChatMessage[] = [
           { role: "system", content: buildSystemPrompt(cwd, config) },
           { role: "user", content: prompt },
@@ -536,9 +533,9 @@ async function runResponsesLoop(
     }
   }
 
-  console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
-  if (config.showUsage) console.error(formatUsage(config.model, totalUsage));
-  if (lastFingerprint && options.verbose) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
+  if (!jsonMode) console.error(chalk.yellow(`\nMax turns (${options.maxTurns}) reached.`));
+  if (config.showUsage && !jsonMode) console.error(formatUsage(config.model, totalUsage));
+  if (lastFingerprint && options.verbose && !jsonMode) console.error(chalk.dim(`Fingerprint: ${lastFingerprint}`));
   return "";
 }
 
@@ -549,23 +546,24 @@ async function uploadFiles(config: GrokConfig, cwd: string): Promise<string[]> {
 
   const client = createClient(config);
   const fileIds: string[] = [];
+  const jsonMode = isJsonMode();
 
   for (const filePath of config.fileAttachments) {
     const resolved = path.resolve(cwd, filePath);
     if (!fs.existsSync(resolved)) {
-      console.error(chalk.yellow(`File not found, skipping: ${filePath}`));
+      if (!jsonMode) console.error(chalk.yellow(`File not found, skipping: ${filePath}`));
       continue;
     }
     try {
-      console.error(chalk.dim(`  Uploading ${filePath}...`));
+      if (!jsonMode) console.error(chalk.dim(`  Uploading ${filePath}...`));
       const file = await (client as any).files.create({
         file: fs.createReadStream(resolved),
         purpose: "assistants",
       });
       fileIds.push(file.id);
-      console.error(chalk.dim(`  Uploaded: ${file.id}`));
+      if (!jsonMode) console.error(chalk.dim(`  Uploaded: ${file.id}`));
     } catch (err: any) {
-      console.error(chalk.yellow(`Failed to upload ${filePath}: ${err.message}`));
+      if (!jsonMode) console.error(chalk.yellow(`Failed to upload ${filePath}: ${err.message}`));
     }
   }
   return fileIds;
