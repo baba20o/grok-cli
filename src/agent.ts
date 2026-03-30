@@ -203,6 +203,7 @@ async function runChatLoop(
         messages,
         tools: tools.length > 0 ? tools : undefined,
         stream: true,
+        stream_options: { include_usage: true },
         max_tokens: config.maxTokens,
         temperature: 0,
         ...extraParams,
