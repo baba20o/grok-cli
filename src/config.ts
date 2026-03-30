@@ -25,7 +25,7 @@ for (const p of envPaths) {
 }
 
 const MODELS = {
-  default: "grok-4-1-fast-reasoning",
+  default: "grok-4.20-0309-reasoning",
   fast: "grok-4-1-fast-reasoning",
   reasoning: "grok-4.20-0309-reasoning",
   nonReasoning: "grok-4.20-0309-non-reasoning",
