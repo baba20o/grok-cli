@@ -1,14 +1,14 @@
-# grok-cli
+# grok-agent
 
 A coding assistant CLI powered by xAI's Grok models.
 
-`grok-cli` gives you an agentic assistant in your terminal that can chat, inspect and edit code, run shell commands, search a repo, attach files/images, use xAI server-side tools, and keep JSONL-backed session history.
+`grok-agent` gives you an agentic assistant in your terminal that can chat, inspect and edit code, run shell commands, search a repo, attach files/images, use xAI server-side tools, and keep JSONL-backed session history.
 
 ## Features
 
-- Exec mode: `grok-cli "fix the bug in utils.ts"`
-- Interactive REPL: `grok-cli`
-- Pipe mode: `git diff | grok-cli "review this patch"`
+- Exec mode: `grok-agent "fix the bug in utils.ts"`
+- Interactive REPL: `grok-agent`
+- Pipe mode: `git diff | grok-agent "review this patch"`
 - Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`
 - Session persistence with resume, fork, archive, rename, rollback, and compaction
 - Ephemeral mode for no-history runs
@@ -29,27 +29,27 @@ A coding assistant CLI powered by xAI's Grok models.
 ```bash
 # Prerequisites: Node.js >= 20 and an xAI API key
 
-git clone https://github.com/baba20o/grok-cli.git
-cd grok-cli
+git clone https://github.com/baba20o/grok-agent.git
+cd grok-agent
 npm install
 npm run build
 npm link
 
 export XAI_API_KEY=your_key_here
-grok-cli doctor
-grok-cli "what does this project do?"
+grok-agent doctor
+grok-agent "what does this project do?"
 ```
 
 You can also place `XAI_API_KEY` in a local `.env` file. The CLI loads `.env` from:
 
 - the current directory
 - the parent directory
-- `~/.grok-cli/.env`
+- `~/.grok-agent/.env`
 
 ## Usage
 
 ```text
-grok-cli [options] [command] [prompt...]
+grok-agent [options] [command] [prompt...]
 ```
 
 Key options:
@@ -60,12 +60,15 @@ Key options:
 - `--cwd <dir>`: change working directory
 - `-r, --resume <id>`: resume a saved session
 - `--fork <id>`: copy a session into a new one
+- `-n, --name <name>`: assign a name to the session
 - `--ephemeral`: run without saving session state
+- `-o, --output <file>`: write final message to a file
 - `--approve`, `--deny-writes`, `--yolo`: approval policy
 - `--sandbox <mode>`: `read-only`, `workspace-write`, or `danger-full-access`
 - `--plan`: ask the model to plan before execution
 - `--json`: machine-readable JSONL events on stdout
 - `--json-schema <schema>`: require structured output
+- `--color <mode>`: set color output mode (`auto`, `always`, `never`)
 - `--web-search`, `--x-search`, `--code-execution`: enable xAI server-side tools
 - `--allow-domain`, `--exclude-domain`, `--search-images`: web search controls
 - `--x-allow`, `--x-exclude`, `--x-from`, `--x-to`, `--x-images`, `--x-videos`: X search controls
@@ -76,7 +79,8 @@ Key options:
 - `--mcp-desc <label=description>`: attach MCP server descriptions
 - `--image <paths...>`: attach images
 - `--attach <files...>`: upload files
-- `--show-reasoning`, `--show-usage`, `--show-diffs`, `--no-citations`
+- `--show-reasoning`, `--show-usage`, `--show-diffs`, `--no-diffs`, `--no-citations`, `--no-tools`
+- `-v, --verbose`: output detailed tool calls
 - `--notify`: desktop notification on completion
 - `--responses-api`: force the Responses API
 - `--defer`: fire-and-forget deferred completion
@@ -84,7 +88,7 @@ Key options:
 Full help:
 
 ```bash
-grok-cli --help
+grok-agent --help
 ```
 
 ## Commands
@@ -108,22 +112,22 @@ grok-cli --help
 Examples:
 
 ```bash
-grok-cli models ls
-grok-cli models info grok-4-1-fast-reasoning
+grok-agent models ls
+grok-agent models info grok-4-1-fast-reasoning
 
-grok-cli sessions list
-grok-cli sessions show <id>
-grok-cli sessions archive <id>
-grok-cli sessions rename <id> "new name"
-grok-cli sessions rollback <id> --turns 2
-grok-cli sessions compact <id>
-grok-cli sessions delete <id>
+grok-agent sessions list
+grok-agent sessions show <id>
+grok-agent sessions archive <id>
+grok-agent sessions rename <id> "new name"
+grok-agent sessions rollback <id> --turns 2
+grok-agent sessions compact <id>
+grok-agent sessions delete <id>
 
-grok-cli review --base origin/main
-grok-cli review --commit HEAD~1
+grok-agent review --base origin/main
+grok-agent review --commit HEAD~1
 
-grok-cli config --init
-grok-cli config
+grok-agent config --init
+grok-agent config
 ```
 
 ## Model Selection
@@ -133,9 +137,9 @@ You can change models in three ways:
 1. One-off on the command line:
 
 ```bash
-grok-cli -m grok-4-1-fast-reasoning "summarize this repo"
-grok-cli --code "fix the TypeScript errors"
-grok-cli --reasoning "design a migration plan"
+grok-agent -m grok-4-1-fast-reasoning "summarize this repo"
+grok-agent --code "fix the TypeScript errors"
+grok-agent --reasoning "design a migration plan"
 ```
 
 2. Via environment:
@@ -169,7 +173,7 @@ Current built-in aliases:
 To see what your API key can actually use:
 
 ```bash
-grok-cli models ls
+grok-agent models ls
 ```
 
 ## Examples
@@ -177,75 +181,75 @@ grok-cli models ls
 ### Coding
 
 ```bash
-grok-cli "fix the failing tests in src/utils.ts"
-grok-cli --code "refactor this module to use async/await"
-grok-cli --reasoning "design a caching layer for the API"
-grok-cli --plan "add a config migration for the new schema"
+grok-agent "fix the failing tests in src/utils.ts"
+grok-agent --code "refactor this module to use async/await"
+grok-agent --reasoning "design a caching layer for the API"
+grok-agent --plan "add a config migration for the new schema"
 ```
 
 ### Interactive
 
 ```bash
-grok-cli
-grok-cli --ephemeral
-grok-cli -r <session-id>
+grok-agent
+grok-agent --ephemeral
+grok-agent -r <session-id>
 ```
 
 ### Research
 
 ```bash
-grok-cli --research "compare React Server Components vs Astro Islands"
-grok-cli --web-search "what changed in Node.js 22"
-grok-cli --x-search "what are developers saying about Bun"
-grok-cli --web-search --allow-domain docs.x.ai --search-images "summarize the docs homepage"
-grok-cli --x-search --x-allow xai --x-from 2026-03-01 --x-to 2026-03-29 "recent Grok platform updates"
-grok-cli --collection engineering-handbook "find the deploy checklist"
+grok-agent --research "compare React Server Components vs Astro Islands"
+grok-agent --web-search "what changed in Node.js 22"
+grok-agent --x-search "what are developers saying about Bun"
+grok-agent --web-search --allow-domain docs.x.ai --search-images "summarize the docs homepage"
+grok-agent --x-search --x-allow xai --x-from 2026-03-01 --x-to 2026-03-29 "recent Grok platform updates"
+grok-agent --collection engineering-handbook "find the deploy checklist"
 ```
 
 ### Images and Files
 
 ```bash
-grok-cli --image screenshot.png "what is wrong with this UI?"
-grok-cli --attach spec.pdf "implement the auth flow from this spec"
-grok-cli --attach data.csv "summarize the anomalies in this dataset"
+grok-agent --image screenshot.png "what is wrong with this UI?"
+grok-agent --attach spec.pdf "implement the auth flow from this spec"
+grok-agent --attach data.csv "summarize the anomalies in this dataset"
 ```
 
 ### Generation
 
 ```bash
-grok-cli imagine "a minimalist logo for a CLI tool"
-grok-cli imagine --pro "photorealistic laptop on a desk"
-grok-cli video --duration 8 --aspect 16:9 "a futuristic terminal UI"
-grok-cli tts --voice eve "Build completed successfully."
-grok-cli tts --stream --codec mp3 --voice leo "Streaming speech sample"
-grok-cli tts-voices
+grok-agent imagine "a minimalist logo for a CLI tool"
+grok-agent imagine --pro "photorealistic laptop on a desk"
+grok-agent video --duration 8 --aspect 16:9 "a futuristic terminal UI"
+grok-agent tts --voice eve "Build completed successfully."
+grok-agent tts --stream --codec mp3 --voice leo "Streaming speech sample"
+grok-agent tts-voices
 ```
 
 ### MCP
 
 ```bash
-grok-cli --mcp https://mcp.deepwiki.com/mcp "explain this repository"
-grok-cli --mcp wiki=https://mcp.deepwiki.com/mcp --mcp custom=https://my-tools.example/mcp "research task"
-grok-cli --mcp wiki=https://mcp.deepwiki.com/mcp --mcp-allow wiki=search,read_page --mcp-desc wiki="Team wiki" "find release notes"
+grok-agent --mcp https://mcp.deepwiki.com/mcp "explain this repository"
+grok-agent --mcp wiki=https://mcp.deepwiki.com/mcp --mcp custom=https://my-tools.example/mcp "research task"
+grok-agent --mcp wiki=https://mcp.deepwiki.com/mcp --mcp-allow wiki=search,read_page --mcp-desc wiki="Team wiki" "find release notes"
 ```
 
 ### Structured Output and JSON Mode
 
 ```bash
-grok-cli --json-schema '{"type":"object","properties":{"files":{"type":"array","items":{"type":"string"}}}}' \
+grok-agent --json-schema '{"type":"object","properties":{"files":{"type":"array","items":{"type":"string"}}}}' \
   "list the source files touched by session persistence"
 
-grok-cli --json --ephemeral "say hi in one short sentence"
+grok-agent --json --ephemeral "say hi in one short sentence"
 ```
 
 ### Collections
 
 ```bash
-grok-cli collections list
-grok-cli collections create "Engineering Docs"
-grok-cli collections upload col_123 handbook.pdf
-grok-cli collections search col_123 "on-call rotation policy"
-grok-cli --collection col_123 "summarize the deployment runbook"
+grok-agent collections list
+grok-agent collections create "Engineering Docs"
+grok-agent collections upload col_123 handbook.pdf
+grok-agent collections search col_123 "on-call rotation policy"
+grok-agent --collection col_123 "summarize the deployment runbook"
 ```
 
 Collection management requires `XAI_MANAGEMENT_API_KEY`.
@@ -253,18 +257,18 @@ Collection management requires `XAI_MANAGEMENT_API_KEY`.
 ### Batch + Realtime
 
 ```bash
-grok-cli batch list --limit 20
-grok-cli batch create nightly-evals
-grok-cli batch add-chat batch_123 "summarize this issue thread"
-grok-cli batch results batch_123 --limit 10
-grok-cli realtime secret --seconds 600
+grok-agent batch list --limit 20
+grok-agent batch create nightly-evals
+grok-agent batch add-chat batch_123 "summarize this issue thread"
+grok-agent batch results batch_123 --limit 10
+grok-agent realtime secret --seconds 600
 ```
 
 ### Tokenization
 
 ```bash
-grok-cli tokenize "fix the bug in approvals.ts"
-grok-cli tokenize -m grok-code-fast-1 "class User { constructor() {} }"
+grok-agent tokenize "fix the bug in approvals.ts"
+grok-agent tokenize -m grok-code-fast-1 "class User { constructor() {} }"
 ```
 
 ## Sessions
@@ -272,28 +276,28 @@ grok-cli tokenize -m grok-code-fast-1 "class User { constructor() {} }"
 Sessions are stored as JSONL files under:
 
 - `GROK_SESSION_DIR/sessions`
-- or `~/.grok-cli/sessions` by default
+- or `~/.grok-agent/sessions` by default
 
 Useful commands:
 
 ```bash
-grok-cli sessions list
-grok-cli sessions list --all
-grok-cli sessions show <id>
-grok-cli -r <id> "follow-up question"
-grok-cli --fork <id> "continue on a new branch of thought"
-grok-cli sessions archive <id>
-grok-cli sessions unarchive <id>
-grok-cli sessions rename <id> "better title"
-grok-cli sessions rollback <id> --turns 1
-grok-cli sessions compact <id>
-grok-cli sessions clear
+grok-agent sessions list
+grok-agent sessions list --all
+grok-agent sessions show <id>
+grok-agent -r <id> "follow-up question"
+grok-agent --fork <id> "continue on a new branch of thought"
+grok-agent sessions archive <id>
+grok-agent sessions unarchive <id>
+grok-agent sessions rename <id> "better title"
+grok-agent sessions rollback <id> --turns 1
+grok-agent sessions compact <id>
+grok-agent sessions clear
 ```
 
 If you do not want any session state written, use:
 
 ```bash
-grok-cli --ephemeral "one-off task"
+grok-agent --ephemeral "one-off task"
 ```
 
 ## Configuration
@@ -301,10 +305,10 @@ grok-cli --ephemeral "one-off task"
 Create a starter config file:
 
 ```bash
-grok-cli config --init
+grok-agent config --init
 ```
 
-That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok-cli`).
+That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok-agent`).
 
 Supported config fields currently include:
 
@@ -368,7 +372,7 @@ Environment variables:
 | `XAI_BASE_URL` | API base URL | `https://api.x.ai/v1` |
 | `XAI_MANAGEMENT_BASE_URL` | management API base URL | `https://management-api.x.ai/v1` |
 | `GROK_MODEL` | default model | `grok-4-1-fast-reasoning` |
-| `GROK_SESSION_DIR` | base dir for sessions and config | `~/.grok-cli` |
+| `GROK_SESSION_DIR` | base dir for sessions and config | `~/.grok-agent` |
 | `GROK_SANDBOX_MODE` | default sandbox mode | `danger-full-access` |
 
 ## Tools
