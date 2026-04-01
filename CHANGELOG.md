@@ -4,6 +4,8 @@ All notable changes to grok-agent will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-01
+
 ### Added
 
 - Session task boards with `tasks` commands plus new local workflow tools: `todo_write`, `task_create`, `task_list`, `task_get`, and `task_update`.
@@ -19,6 +21,9 @@ All notable changes to grok-agent will be documented in this file.
 - Batch ergonomics now include `batch create-jsonl` for create-and-populate JSONL workflows.
 - Interactive mode now exposes `/tasks`.
 - README now documents tasks, scheduling, MCP resource inspection, subagents, notebook editing, web fetch, and realtime transcription.
+- `web_fetch` now falls back cleanly when the runtime `fetch()` transport fails.
+- Memory auto-recall is stricter about actual relevance and no longer injects unrelated recent memories.
+- Subagents now default to 15 turns and support up to 30 turns for bounded investigations.
 
 ## [0.6.0] - 2026-04-01
 
