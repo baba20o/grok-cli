@@ -24,6 +24,7 @@ All notable changes to grok-agent will be documented in this file.
 
 ### Changed
 
+- The default CLI data directory is now `~/.grok` instead of `~/.grok-cli`, with automatic copy-forward from legacy `~/.grok-cli` and `~/.grok-agent` directories.
 - Responses API requests now serialize local function tools in xAI's native Responses format.
 - Local tool execution now shares one orchestration pipeline, supports concurrency-safe read batches, and persists oversized tool outputs to disk.
 - Session storage now tracks archived sessions and preserves pre-turn setup messages when rolling back turns.

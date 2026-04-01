@@ -42,7 +42,7 @@ Set your API key:
 # Option 1: environment variable
 export XAI_API_KEY=your_key_here
 
-# Option 2: .env file (in your project root or ~/.grok-cli/.env)
+# Option 2: .env file (in your project root or ~/.grok/.env)
 echo "XAI_API_KEY=your_key_here" > .env
 ```
 
@@ -68,7 +68,7 @@ npm run build
 npm link
 ```
 
-The CLI loads `.env` from the current directory, the parent directory, or `~/.grok-cli/.env`.
+The CLI loads `.env` from the current directory, the parent directory, or `~/.grok/.env`.
 
 ## Usage
 
@@ -299,6 +299,8 @@ Memory is stored under your CLI data dir:
 
 Each scope keeps a `MEMORY.md` index plus individual markdown files with frontmatter. New user turns automatically recall the most relevant memories. When semantic recall is enabled, Grok uses a fast side query to pick the strongest candidates and falls back to heuristic matching if that selection step fails.
 
+The default CLI data dir is `~/.grok`. If you already have data in `~/.grok-cli` or `~/.grok-agent`, the CLI will copy it forward automatically the first time it needs the new default path.
+
 ### Collections
 
 ```bash
@@ -333,7 +335,7 @@ grok-agent tokenize -m grok-code-fast-1 "class User { constructor() {} }"
 Sessions are stored as JSONL files under:
 
 - `GROK_SESSION_DIR/sessions`
-- or `~/.grok-cli/sessions` by default
+- or `~/.grok/sessions` by default
 
 Useful commands:
 
@@ -365,7 +367,7 @@ Create a starter config file:
 grok-agent config --init
 ```
 
-That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok-cli`).
+That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok`).
 
 Supported config fields currently include:
 
@@ -437,7 +439,7 @@ Environment variables:
 | `XAI_BASE_URL` | API base URL | `https://api.x.ai/v1` |
 | `XAI_MANAGEMENT_BASE_URL` | management API base URL | `https://management-api.x.ai/v1` |
 | `GROK_MODEL` | default model | `grok-4-1-fast-reasoning` |
-| `GROK_SESSION_DIR` | base dir for sessions, config, and memory | `~/.grok-cli` |
+| `GROK_SESSION_DIR` | base dir for sessions, config, and memory | `~/.grok` |
 | `GROK_SANDBOX_MODE` | default sandbox mode | `danger-full-access` |
 | `GROK_MEMORY_ENABLED` | enable or disable persistent memory | `true` |
 | `GROK_MEMORY_AUTO_RECALL` | automatically inject relevant memory on new turns | `true` |

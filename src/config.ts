@@ -13,10 +13,17 @@ import type {
   ServerToolKind,
 } from "./types.js";
 
+const DEFAULT_BASE_DIR = path.join(os.homedir(), ".grok");
+const LEGACY_BASE_DIRS = [
+  path.join(os.homedir(), ".grok-cli"),
+  path.join(os.homedir(), ".grok-agent"),
+];
+
 const envPaths = [
   path.join(process.cwd(), ".env"),
   path.join(process.cwd(), "..", ".env"),
-  path.join(os.homedir(), ".grok-cli", ".env"),
+  path.join(DEFAULT_BASE_DIR, ".env"),
+  ...LEGACY_BASE_DIRS.map((dir) => path.join(dir, ".env")),
 ];
 for (const p of envPaths) {
   if (fs.existsSync(p)) {
@@ -42,8 +49,26 @@ function readEnvBoolean(name: string): boolean | undefined {
   return undefined;
 }
 
+function copyLegacyBaseDirIfNeeded(targetDir: string): void {
+  if (process.env.GROK_SESSION_DIR) return;
+  if (fs.existsSync(targetDir)) return;
+
+  for (const legacyDir of LEGACY_BASE_DIRS) {
+    if (!fs.existsSync(legacyDir)) continue;
+    try {
+      fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+      fs.cpSync(legacyDir, targetDir, { recursive: true, force: false, errorOnExist: false });
+      return;
+    } catch {
+      return;
+    }
+  }
+}
+
 function getBaseDir(): string {
-  return process.env.GROK_SESSION_DIR || path.join(os.homedir(), ".grok-cli");
+  if (process.env.GROK_SESSION_DIR) return process.env.GROK_SESSION_DIR;
+  copyLegacyBaseDirIfNeeded(DEFAULT_BASE_DIR);
+  return DEFAULT_BASE_DIR;
 }
 
 function getManagementBaseUrl(): string {
@@ -52,7 +77,18 @@ function getManagementBaseUrl(): string {
 
 function loadConfigFile(): ConfigFile {
   const configPath = path.join(getBaseDir(), "config.json");
-  if (!fs.existsSync(configPath)) return {};
+  if (!fs.existsSync(configPath)) {
+    for (const legacyDir of LEGACY_BASE_DIRS) {
+      const legacyPath = path.join(legacyDir, "config.json");
+      if (!fs.existsSync(legacyPath)) continue;
+      try {
+        return JSON.parse(fs.readFileSync(legacyPath, "utf-8"));
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
   try {
     return JSON.parse(fs.readFileSync(configPath, "utf-8"));
   } catch {
