@@ -4,6 +4,8 @@ All notable changes to grok-agent will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-01
+
 ### Added
 
 - Typed server-side tool configuration for web search, X search, code execution, file search, and MCP.

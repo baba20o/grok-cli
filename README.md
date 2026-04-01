@@ -13,6 +13,7 @@ A coding assistant CLI powered by xAI's Grok models.
 - Interactive REPL: `grok-agent`
 - Pipe mode: `git diff | grok-agent "review this patch"`
 - Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`, `ask_user_question`, `lsp`, `tool_search`, `memory_search`, `remember_memory`, `forget_memory`
+- Tool orchestration for concurrent safe reads plus persisted oversized tool outputs
 - Session persistence with resume, fork, archive, rename, rollback, and compaction
 - Persistent memory with project/user scopes, markdown files, `MEMORY.md` indexes, and automatic recall
 - Ephemeral mode for no-history runs
@@ -227,6 +228,12 @@ grok-agent --ephemeral
 grok-agent -r <session-id>
 ```
 
+Interactive mode also supports slash commands for session control and quick utilities:
+
+```text
+/session /sessions /usage /name /model /archive /compact /rollback /files
+```
+
 ### Research
 
 ```bash
@@ -275,6 +282,22 @@ grok-agent --json --ephemeral "say hi in one short sentence"
 ```
 
 JSON mode emits one event per line on stdout. Memory-enabled runs can emit `memory.recalled` before the main turn when stored context is injected.
+
+Common event types:
+
+- `session.started`
+- `memory.recalled`
+- `turn.started`
+- `turn.completed`
+- `tool.called`
+- `tool.result`
+- `tool.persisted`
+- `server_tool.called`
+- `server_tool.usage`
+- `citations`
+- `message`
+- `error`
+- `session.completed`
 
 ### Memory
 
@@ -438,7 +461,7 @@ Environment variables:
 | `XAI_MANAGEMENT_API_KEY` | xAI management API key for collections | unset |
 | `XAI_BASE_URL` | API base URL | `https://api.x.ai/v1` |
 | `XAI_MANAGEMENT_BASE_URL` | management API base URL | `https://management-api.x.ai/v1` |
-| `GROK_MODEL` | default model | `grok-4-1-fast-reasoning` |
+| `GROK_MODEL` | default model | `grok-4.20-0309-reasoning` |
 | `GROK_SESSION_DIR` | base dir for sessions, config, and memory | `~/.grok` |
 | `GROK_SANDBOX_MODE` | default sandbox mode | `danger-full-access` |
 | `GROK_MEMORY_ENABLED` | enable or disable persistent memory | `true` |
@@ -489,6 +512,7 @@ Source layout:
 src/
 ├── index.ts             CLI entry and subcommands
 ├── agent.ts             Agent loop and interactive mode
+├── memory.ts            Persistent memory storage and recall
 ├── client.ts            xAI client wrapper
 ├── cli-errors.ts        Shared CLI/network/session error formatting
 ├── config.ts            Config and .env loading
@@ -499,6 +523,8 @@ src/
 ├── hooks.ts             Hook execution
 ├── compaction.ts        Conversation compaction
 ├── truncation.ts        Tool output truncation and token estimation
+├── tool-runner.ts       Shared local-tool orchestration
+├── tool-result-storage.ts Persist oversized tool outputs to disk
 ├── system-prompt.ts     Dynamic system prompt
 ├── collections-api.ts   xAI collections management helpers
 ├── batch-api.ts         Batch API helpers
@@ -510,7 +536,13 @@ src/
 └── tools/
     ├── index.ts
     ├── definitions.ts
+    ├── ask-user-question.ts
     ├── bash.ts
+    ├── lsp.ts
+    ├── memory-search.ts
+    ├── remember-memory.ts
+    ├── forget-memory.ts
+    ├── tool-search.ts
     ├── read-file.ts
     ├── write-file.ts
     ├── edit-file.ts
