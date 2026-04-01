@@ -106,7 +106,7 @@ export async function executeSpawnSubagent(args: {
 
   const subagentName = args.name?.trim() || "Subagent";
   const model = args.model || options.config.model;
-  const maxTurns = Math.min(Math.max(args.max_turns || 4, 1), 8);
+  const maxTurns = Math.min(Math.max(args.max_turns || 15, 1), 30);
 
   if (options.sessionDir && options.sessionId && args.task_id) {
     updateTask(options.sessionDir, options.sessionId, args.task_id, {

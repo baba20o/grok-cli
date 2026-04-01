@@ -397,7 +397,7 @@ export const toolDefinitions: ToolDef[] = [
           },
           max_turns: {
             type: "number",
-            description: "Maximum turns for the subagent (default 4, max 8).",
+            description: "Maximum turns for the subagent (default 15, max 30).",
           },
           task_id: {
             type: "string",
