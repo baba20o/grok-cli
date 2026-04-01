@@ -13,6 +13,19 @@ export const toolCapabilities: Record<string, ToolCapabilities> = {
   memory_search: { readOnly: true, concurrencySafe: true },
   remember_memory: { readOnly: false, concurrencySafe: false },
   forget_memory: { readOnly: false, concurrencySafe: false },
+  todo_write: { readOnly: false, concurrencySafe: false },
+  task_create: { readOnly: false, concurrencySafe: false },
+  task_list: { readOnly: true, concurrencySafe: true },
+  task_get: { readOnly: true, concurrencySafe: true },
+  task_update: { readOnly: false, concurrencySafe: false },
+  schedule_create: { readOnly: false, concurrencySafe: false },
+  schedule_list: { readOnly: true, concurrencySafe: true },
+  schedule_delete: { readOnly: false, concurrencySafe: false },
+  web_fetch: { readOnly: true, concurrencySafe: true },
+  notebook_edit: { readOnly: false, concurrencySafe: false },
+  mcp_list_resources: { readOnly: true, concurrencySafe: true },
+  mcp_read_resource: { readOnly: true, concurrencySafe: true },
+  spawn_subagent: { readOnly: true, concurrencySafe: false },
   read_file: { readOnly: true, concurrencySafe: true },
   write_file: { readOnly: false, concurrencySafe: false },
   edit_file: { readOnly: false, concurrencySafe: false },
@@ -144,6 +157,167 @@ export const toolDefinitions: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "todo_write",
+      description:
+        "Replace the current session task checklist with an updated set of items. " +
+        "Use this to keep a concise live plan while working through a multi-step task.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "Existing task id to preserve if known." },
+                content: { type: "string", description: "Task description." },
+                status: {
+                  type: "string",
+                  enum: ["pending", "in_progress", "completed", "cancelled"],
+                },
+                owner: { type: "string", description: "Optional owner label." },
+                priority: {
+                  type: "string",
+                  enum: ["low", "medium", "high"],
+                },
+                notes: { type: "string", description: "Optional brief notes." },
+              },
+              required: ["content"],
+            },
+          },
+        },
+        required: ["items"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_create",
+      description:
+        "Create a durable task in the current session task board. " +
+        "Use this when you want named work items with status and ownership.",
+      parameters: {
+        type: "object",
+        properties: {
+          content: { type: "string", description: "Task description." },
+          status: {
+            type: "string",
+            enum: ["pending", "in_progress", "completed", "cancelled"],
+          },
+          owner: { type: "string" },
+          priority: {
+            type: "string",
+            enum: ["low", "medium", "high"],
+          },
+          notes: { type: "string" },
+        },
+        required: ["content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_list",
+      description: "List the current session tasks and their statuses.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["pending", "in_progress", "completed", "cancelled"],
+            description: "Optional status filter.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_get",
+      description: "Show full details for a specific task by id or exact title.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Task id or exact task title." },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_update",
+      description:
+        "Update task status, owner, notes, or content for a specific task.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Task id or exact task title." },
+          content: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["pending", "in_progress", "completed", "cancelled"],
+          },
+          owner: { type: ["string", "null"] as any },
+          priority: {
+            type: ["string", "null"] as any,
+            enum: ["low", "medium", "high", null],
+          },
+          notes: { type: ["string", "null"] as any },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_create",
+      description:
+        "Create a scheduled prompt to run later. " +
+        "Use either cron for recurring work or run_at for a one-time future execution.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Prompt to run later." },
+          cron: { type: "string", description: "Cron expression like '0 9 * * 1-5'." },
+          run_at: { type: "string", description: "One-time ISO timestamp." },
+          cwd: { type: "string", description: "Working directory override." },
+          model: { type: "string", description: "Model override." },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_list",
+      description: "List saved schedules and their next run times.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_delete",
+      description: "Delete a saved schedule by id.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_user_question",
       description:
         "Ask the user one or more focused multiple-choice questions when a decision is ambiguous. " +
@@ -198,6 +372,49 @@ export const toolDefinitions: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "spawn_subagent",
+      description:
+        "Run a focused read-only subagent to investigate a bounded subtask and return a summary. " +
+        "Use this for parallelizable research, codebase exploration, or fact gathering.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "Concrete subtask for the subagent.",
+          },
+          context: {
+            type: "string",
+            description: "Optional extra context to pass to the subagent.",
+          },
+          name: {
+            type: "string",
+            description: "Short display name for the subagent.",
+          },
+          model: {
+            type: "string",
+            description: "Optional model override.",
+          },
+          max_turns: {
+            type: "number",
+            description: "Maximum turns for the subagent (default 4, max 8).",
+          },
+          task_id: {
+            type: "string",
+            description: "Optional session task id to claim while running.",
+          },
+          owner: {
+            type: "string",
+            description: "Optional owner label to set on the task.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "lsp",
       description:
         "Use TypeScript/JavaScript code intelligence to find definitions, references, hover info, and symbols. " +
@@ -228,6 +445,84 @@ export const toolDefinitions: ToolDef[] = [
           },
         },
         required: ["operation"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description:
+        "Fetch and inspect the contents of an exact HTTP/HTTPS URL. " +
+        "Use this when you already know the page you want, rather than searching first.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Exact URL to fetch." },
+          raw: { type: "boolean", description: "Return raw body instead of cleaned text." },
+          max_chars: { type: "number", description: "Maximum response characters to return." },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "notebook_edit",
+      description:
+        "Inspect or edit Jupyter notebooks (.ipynb) at the cell level. " +
+        "Use this instead of raw JSON edits when working with notebooks.",
+      parameters: {
+        type: "object",
+        properties: {
+          operation: {
+            type: "string",
+            enum: ["list_cells", "read_cell", "replace_cell", "append_cell", "delete_cell"],
+          },
+          notebook_path: { type: "string", description: "Path to the notebook file." },
+          cell_index: { type: "number", description: "0-based cell index for targeted operations." },
+          cell_type: {
+            type: "string",
+            enum: ["code", "markdown", "raw"],
+            description: "Cell type for append or replace operations.",
+          },
+          source: { type: "string", description: "New cell content for append or replace operations." },
+        },
+        required: ["operation", "notebook_path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_list_resources",
+      description:
+        "List resources exposed by a configured remote MCP server. " +
+        "Use the configured server label or the raw MCP URL.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: { type: "string", description: "MCP server label or URL." },
+          cursor: { type: "string", description: "Pagination cursor when supported." },
+        },
+        required: ["server"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_read_resource",
+      description:
+        "Read a specific resource from a configured remote MCP server.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: { type: "string", description: "MCP server label or URL." },
+          uri: { type: "string", description: "Resource URI." },
+        },
+        required: ["server", "uri"],
       },
     },
   },

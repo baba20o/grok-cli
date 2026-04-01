@@ -22,6 +22,20 @@ export interface ToolResultMetadata {
   truncated?: TruncatedToolOutput;
 }
 
+export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TaskPriority = "low" | "medium" | "high";
+
+export interface TaskItem {
+  id: string;
+  content: string;
+  status: TaskStatus;
+  owner?: string;
+  priority?: TaskPriority;
+  notes?: string;
+  created: string;
+  updated: string;
+}
+
 export type MemoryScope = "project" | "user";
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 
@@ -126,6 +140,7 @@ export interface FileSearchToolConfig {
   retrievalMode?: "keyword" | "semantic" | "hybrid";
   maxNumResults?: number;
   includeResults?: boolean;
+  metadataFilter?: string;
 }
 
 export type ServerToolConfig =
@@ -139,6 +154,8 @@ export interface McpServer {
   label: string;
   description?: string;
   allowedTools?: string[];
+  authToken?: string;
+  authTokenEnv?: string;
 }
 
 export interface ToolApprovalSettings {

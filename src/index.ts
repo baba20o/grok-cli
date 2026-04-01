@@ -30,6 +30,22 @@ import {
   searchMemories,
 } from "./memory.js";
 import {
+  clearTasks,
+  createTask,
+  formatTask,
+  getTask,
+  listTasks,
+  updateTask,
+} from "./tasks.js";
+import {
+  createSchedule,
+  deleteSchedule,
+  dueSchedules,
+  listSchedules,
+  markScheduleRun,
+  nextCronRun,
+} from "./schedules.js";
+import {
   createCollection,
   deleteCollection,
   getCollection,
@@ -55,7 +71,12 @@ import {
   createRealtimeClientSecret,
   listVoices,
   streamTtsToFile,
+  transcribeWavFile,
 } from "./voice-api.js";
+import {
+  listMcpResources,
+  readMcpResource,
+} from "./mcp-http.js";
 import type {
   AgentOptions,
   GrokConfig,
@@ -136,6 +157,8 @@ program
   .option("--x-videos", "Enable video understanding during X search")
   .option("--collection <ids...>", "Enable file search over collection id(s)")
   .option("--file-search-mode <mode>", "file search mode: keyword, semantic, hybrid")
+  .option("--collection-filter <expr>", "Metadata filter for collection/file search")
+  .option("--file-search-results <n>", "Maximum number of collection results")
   .option("--include-tool-outputs", "Request server-side tool outputs when supported")
   .option("--mcp <urls...>", "Connect to MCP server(s)")
   .option("--mcp-allow <entries...>", "Restrict MCP tools per server label: label=tool1,tool2")
@@ -640,6 +663,219 @@ memoryCmd.command("forget <ref>").description("Delete stored memory")
     console.log(chalk.green(`Deleted: ${deleted.id}`));
   });
 
+const tasksCmd = program.command("tasks").description("Manage per-session task boards");
+
+tasksCmd.command("list").alias("ls").description("List tasks")
+  .option("--session <id>", "Session id (defaults to latest session for this cwd)")
+  .option("--status <status>", "Filter by status")
+  .action((opts: any) => {
+    const config = getConfig();
+    const sessionId = resolveTaskSessionOrExit(config, getCommandCwd(), opts.session);
+    const tasks = listTasks(config.sessionDir, sessionId)
+      .filter((task) => !opts.status || task.status === opts.status);
+    if (tasks.length === 0) {
+      console.log(chalk.dim("No tasks."));
+      return;
+    }
+    for (const task of tasks) {
+      console.log(formatTask(task));
+    }
+  });
+
+tasksCmd.command("show <id>").description("Show task details")
+  .option("--session <id>", "Session id (defaults to latest session for this cwd)")
+  .action((taskId: string, opts: any) => {
+    const config = getConfig();
+    const sessionId = resolveTaskSessionOrExit(config, getCommandCwd(), opts.session);
+    const task = getTask(config.sessionDir, sessionId, taskId);
+    if (!task) {
+      console.error(chalk.red(`Task not found: ${taskId}`));
+      process.exit(1);
+    }
+    console.log(`Session: ${sessionId}`);
+    console.log(`ID: ${task.id}`);
+    console.log(`Status: ${task.status}`);
+    console.log(`Content: ${task.content}`);
+    if (task.owner) console.log(`Owner: ${task.owner}`);
+    if (task.priority) console.log(`Priority: ${task.priority}`);
+    if (task.notes) console.log(`Notes: ${task.notes}`);
+  });
+
+tasksCmd.command("create <content...>").description("Create a task")
+  .option("--session <id>", "Session id (defaults to latest session for this cwd)")
+  .option("--status <status>", "Initial status", "pending")
+  .option("--owner <name>", "Owner label")
+  .option("--priority <level>", "Priority: low, medium, high")
+  .option("--notes <text>", "Notes")
+  .action((contentParts: string[], opts: any) => {
+    const config = getConfig();
+    const sessionId = resolveTaskSessionOrExit(config, getCommandCwd(), opts.session);
+    const task = createTask(config.sessionDir, sessionId, {
+      content: contentParts.join(" "),
+      status: opts.status,
+      owner: opts.owner,
+      priority: opts.priority,
+      notes: opts.notes,
+    });
+    console.log(chalk.green(`Created ${task.id}`));
+  });
+
+tasksCmd.command("update <id>").description("Update a task")
+  .option("--session <id>", "Session id (defaults to latest session for this cwd)")
+  .option("--status <status>", "New status")
+  .option("--owner <name>", "Owner label")
+  .option("--clear-owner", "Remove owner")
+  .option("--priority <level>", "Priority: low, medium, high")
+  .option("--clear-priority", "Remove priority")
+  .option("--notes <text>", "New notes")
+  .option("--clear-notes", "Remove notes")
+  .option("--content <text>", "Replace task content")
+  .action((taskId: string, opts: any) => {
+    const config = getConfig();
+    const sessionId = resolveTaskSessionOrExit(config, getCommandCwd(), opts.session);
+    const task = updateTask(config.sessionDir, sessionId, taskId, {
+      content: opts.content,
+      status: opts.status,
+      owner: opts.clearOwner ? null : opts.owner,
+      priority: opts.clearPriority ? null : opts.priority,
+      notes: opts.clearNotes ? null : opts.notes,
+    });
+    if (!task) {
+      console.error(chalk.red(`Task not found: ${taskId}`));
+      process.exit(1);
+    }
+    console.log(chalk.green(`Updated ${task.id}`));
+  });
+
+tasksCmd.command("clear").description("Clear all tasks for a session")
+  .option("--session <id>", "Session id (defaults to latest session for this cwd)")
+  .action((opts: any) => {
+    const config = getConfig();
+    const sessionId = resolveTaskSessionOrExit(config, getCommandCwd(), opts.session);
+    clearTasks(config.sessionDir, sessionId);
+    console.log(chalk.green(`Cleared tasks for ${sessionId}`));
+  });
+
+const scheduleCmd = program.command("schedule").description("Manage scheduled prompts");
+
+scheduleCmd.command("list").alias("ls").description("List schedules")
+  .action(() => {
+    const config = getConfig();
+    const schedules = listSchedules(config.sessionDir);
+    if (schedules.length === 0) {
+      console.log(chalk.dim("No schedules."));
+      return;
+    }
+    for (const entry of schedules) {
+      console.log(`${chalk.cyan(entry.id)} ${chalk.dim(entry.nextRunAt)} ${entry.prompt}`);
+    }
+  });
+
+scheduleCmd.command("create <prompt...>").description("Create a scheduled prompt")
+  .option("--at <iso>", "One-time ISO timestamp")
+  .option("--cron <expr>", "Recurring cron expression")
+  .option("--cwd <dir>", "Working directory", process.cwd())
+  .option("-m, --model <model>", "Model override")
+  .action((promptParts: string[], opts: any) => {
+    const config = getConfig();
+    try {
+      const entry = createSchedule(config.sessionDir, {
+        prompt: promptParts.join(" "),
+        cwd: opts.cwd,
+        model: opts.model,
+        cron: opts.cron,
+        runAt: opts.at,
+      });
+      console.log(chalk.green(`Created ${entry.id}`));
+      console.log(chalk.dim(`Next run: ${entry.nextRunAt}`));
+    } catch (err: any) {
+      console.error(chalk.red(err.message));
+      process.exit(1);
+    }
+  });
+
+scheduleCmd.command("delete <id>").description("Delete a schedule")
+  .action((id: string) => {
+    const config = getConfig();
+    const removed = deleteSchedule(config.sessionDir, id);
+    if (!removed) {
+      console.error(chalk.red(`Schedule not found: ${id}`));
+      process.exit(1);
+    }
+    console.log(chalk.green(`Deleted ${removed.id}`));
+  });
+
+scheduleCmd.command("run-due").description("Run all due scheduled prompts")
+  .option("--limit <n>", "Maximum schedules to run", "10")
+  .action(async (opts: any) => {
+    const baseConfig = getConfig();
+    const due = dueSchedules(baseConfig.sessionDir).slice(0, parseInt(opts.limit, 10));
+    if (due.length === 0) {
+      console.log(chalk.dim("No due schedules."));
+      return;
+    }
+
+    for (const entry of due) {
+      console.log(chalk.cyan(`Running ${entry.id}`) + chalk.dim(` (${entry.cwd})`));
+      const runConfig = getConfig({
+        model: entry.model || baseConfig.model,
+        ephemeral: true,
+      });
+      await runAgent(runConfig, entry.prompt, {
+        verbose: false,
+        showReasoning: false,
+        maxTurns: runConfig.maxToolRounds,
+        cwd: entry.cwd,
+      });
+      const updated = markScheduleRun(baseConfig.sessionDir, entry.id);
+      if (updated?.cron) {
+        console.log(chalk.dim(`Next run: ${updated.nextRunAt}`));
+      } else {
+        console.log(chalk.dim("Completed one-shot schedule."));
+      }
+    }
+  });
+
+const mcpCmd = program.command("mcp").description("Inspect configured MCP resources");
+
+mcpCmd.command("resources <server>").description("List MCP resources for a server")
+  .option("--cursor <cursor>", "Pagination cursor")
+  .action(async (server: string, opts: any) => {
+    const config = getConfig();
+    try {
+      const result = await listMcpResources(server, config.mcpServers, opts.cursor);
+      if (result.resources.length === 0) {
+        console.log(chalk.dim("No MCP resources."));
+        return;
+      }
+      for (const resource of result.resources) {
+        console.log(`${resource.uri} ${resource.name ? chalk.dim(resource.name) : ""}`.trim());
+      }
+      if (result.nextCursor) console.log(chalk.dim(`next cursor: ${result.nextCursor}`));
+    } catch (err: any) {
+      console.error(chalk.red(err.message));
+      process.exit(1);
+    }
+  });
+
+mcpCmd.command("read <server> <uri>").description("Read an MCP resource")
+  .action(async (server: string, uri: string) => {
+    const config = getConfig();
+    try {
+      const result = await readMcpResource(server, uri, config.mcpServers);
+      for (const content of result.contents) {
+        if (typeof content?.text === "string") {
+          console.log(content.text);
+        } else {
+          console.log(JSON.stringify(content, null, 2));
+        }
+      }
+    } catch (err: any) {
+      console.error(chalk.red(err.message));
+      process.exit(1);
+    }
+  });
+
 const reviewCmd = program.command("review").description("Run Grok in code review mode")
   .option("--base <branch>", "Review diff against a base branch")
   .option("--commit <sha>", "Review a specific commit")
@@ -965,10 +1201,19 @@ collectionsCmd.command("rm-doc <id> <fileId>").description("Delete a document fr
 
 collectionsCmd.command("search <id> <query...>").description("Search documents in a collection")
   .option("--mode <mode>", "Search mode: keyword, semantic, hybrid", "hybrid")
+  .option("--filter <expr>", "Metadata filter expression")
+  .option("--limit <n>", "Maximum number of results")
   .action(async (id: string, queryParts: string[], opts: any) => {
     const config = getConfig();
     try {
-      const results = await searchCollectionDocuments(config, queryParts.join(" "), [id], opts.mode);
+      const results = await searchCollectionDocuments(
+        config,
+        queryParts.join(" "),
+        [id],
+        opts.mode,
+        opts.filter,
+        opts.limit ? parseInt(opts.limit, 10) : undefined,
+      );
       console.log(JSON.stringify(results, null, 2));
     } catch (err: any) {
       console.error(chalk.red(formatApiError(`Failed to search collection ${id}`, err)));
@@ -1090,6 +1335,23 @@ batchCmd.command("add-jsonl <id> <file>").description("Add batch requests from a
     }
   });
 
+batchCmd.command("create-jsonl <file> [name...]").description("Create a batch and populate it from a JSONL file")
+  .action(async (file: string, nameParts: string[]) => {
+    const config = getConfig();
+    try {
+      const requests = loadBatchRequestsFromJsonl(file);
+      const batch = await createBatch(config, nameParts.join(" ") || path.basename(file));
+      await addBatchRequests(config, batch.batch_id, requests);
+      console.log(JSON.stringify({
+        batch_id: batch.batch_id,
+        added_requests: requests.length,
+      }, null, 2));
+    } catch (err: any) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exit(1);
+    }
+  });
+
 const realtimeCmd = program.command("realtime").description("Realtime API helpers");
 
 realtimeCmd.command("secret").description("Create an ephemeral realtime client secret")
@@ -1101,6 +1363,18 @@ realtimeCmd.command("secret").description("Create an ephemeral realtime client s
       const session = opts.session ? JSON.parse(opts.session) as Record<string, unknown> : undefined;
       const secret = await createRealtimeClientSecret(config, parseInt(opts.seconds, 10), session);
       console.log(JSON.stringify(secret, null, 2));
+    } catch (err: any) {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+      process.exit(1);
+    }
+  });
+
+realtimeCmd.command("transcribe <file>").description("Transcribe a mono 16-bit PCM WAV file via the realtime API")
+  .action(async (file: string) => {
+    const config = getConfig();
+    try {
+      const result = await transcribeWavFile(config, file);
+      console.log(result.transcript);
     } catch (err: any) {
       console.error(chalk.red(err instanceof Error ? err.message : String(err)));
       process.exit(1);
@@ -1340,7 +1614,9 @@ function buildServerToolsFromOptions(opts: any): ServerToolConfig[] {
       type: "file_search",
       collectionIds: opts.collection,
       retrievalMode: opts.fileSearchMode,
+      maxNumResults: opts.fileSearchResults ? parseInt(opts.fileSearchResults, 10) : undefined,
       includeResults: !!opts.includeToolOutputs,
+      metadataFilter: opts.collectionFilter,
     });
   }
 
@@ -1423,6 +1699,25 @@ function buildReviewPrompt(opts: {
 
 function getCommandCwd(): string {
   return ((program.opts() as any)?.cwd as string | undefined) || process.cwd();
+}
+
+function resolveTaskSessionOrExit(config: GrokConfig, cwd: string, explicitId?: string): string {
+  const mgr = createSessionManagerOrExit(config.sessionDir);
+  if (explicitId) {
+    if (!mgr.sessionExists(explicitId)) {
+      console.error(chalk.red(`Session not found: ${explicitId}`));
+      process.exit(1);
+    }
+    return explicitId;
+  }
+
+  const resolvedCwd = path.resolve(cwd);
+  const match = mgr.listSessions({ includeArchived: true })
+    .find((session) => path.resolve(session.cwd) === resolvedCwd);
+  if (match) return match.id;
+
+  console.error(chalk.red(`No session found for ${resolvedCwd}. Pass --session <id>.`));
+  process.exit(1);
 }
 
 function parseMemoryScopeOrExit(

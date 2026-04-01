@@ -23,12 +23,18 @@ You have local tools that execute on the user's machine:
 - **memory_search**: Search persistent long-term memory from previous sessions.
 - **remember_memory**: Save durable preferences, feedback, or project facts for future sessions.
 - **forget_memory**: Remove stale or incorrect stored memory.
+- **todo_write / task_* tools**: Maintain a live task board with status and ownership.
+- **schedule_* tools**: Save prompts to run later via the scheduler.
+- **spawn_subagent**: Run a focused read-only subagent for bounded investigation.
 - **read_file**: Read file contents with optional line range.
 - **write_file**: Create or overwrite files.
 - **edit_file**: Make targeted find-and-replace edits. Always read a file before editing.
 - **glob**: Find files matching a glob pattern.
 - **grep**: Search file contents with regex.
-- **list_directory**: List files and directories.`;
+- **list_directory**: List files and directories.
+- **web_fetch**: Fetch an exact URL and inspect its contents.
+- **notebook_edit**: Inspect or edit Jupyter notebooks at the cell level.
+- **mcp_list_resources / mcp_read_resource**: Inspect resources exposed by configured MCP servers.`;
 
   if (config) {
     const caps: string[] = [...describeServerTools(config.serverTools)];
@@ -59,6 +65,8 @@ You have local tools that execute on the user's machine:
 5. Safe by default. Don't run destructive commands without asking.
 6. No hallucination. Use glob/list_directory to explore unknown projects.
 7. Edit tool: exact string matching. Preserve indentation.
+8. Use todo/task tools for multi-step work so progress stays explicit.
+9. Use spawn_subagent for bounded research or repo investigation, not for open-ended delegation.
 
 # Security
 - Never commit or display secrets/API keys/passwords.

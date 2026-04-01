@@ -145,12 +145,16 @@ export async function searchCollectionDocuments(
   query: string,
   collectionIds: string[],
   retrievalMode?: "keyword" | "semantic" | "hybrid",
+  metadataFilter?: string,
+  maxNumResults?: number,
 ): Promise<any> {
   const body: any = {
     query,
     source: { collection_ids: collectionIds },
   };
   if (retrievalMode) body.retrieval_mode = { type: retrievalMode };
+  if (metadataFilter) body.filter = metadataFilter;
+  if (maxNumResults) body.max_num_results = maxNumResults;
 
   const response = await fetch(`${config.baseUrl}/documents/search`, {
     method: "POST",

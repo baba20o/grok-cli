@@ -12,18 +12,20 @@ A coding assistant CLI powered by xAI's Grok models.
 - Exec mode: `grok-agent "fix the bug in utils.ts"`
 - Interactive REPL: `grok-agent`
 - Pipe mode: `git diff | grok-agent "review this patch"`
-- Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`, `ask_user_question`, `lsp`, `tool_search`, `memory_search`, `remember_memory`, `forget_memory`
+- Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`, `ask_user_question`, `lsp`, `tool_search`, `memory_search`, `remember_memory`, `forget_memory`, `todo_write`, `task_*`, `schedule_*`, `web_fetch`, `notebook_edit`, `mcp_*`, `spawn_subagent`
 - Tool orchestration for concurrent safe reads plus persisted oversized tool outputs
 - Session persistence with resume, fork, archive, rename, rollback, and compaction
+- Session task boards with explicit status/ownership plus read-only subagents for bounded investigation
+- Scheduler support for one-shot and recurring cron-style prompts
 - Persistent memory with project/user scopes, markdown files, `MEMORY.md` indexes, and automatic recall
 - Ephemeral mode for no-history runs
 - JSONL output mode for automation
 - xAI server-side tools: web search, X search, code execution, file search, and MCP
 - Search filters for domains, X handles, date ranges, and media understanding
-- Collection management backed by xAI's management API
+- Collection management backed by xAI's management API, with direct metadata-filtered document search
 - Review mode for uncommitted diffs, branches, and commits
 - Sandbox modes and per-tool approval overrides
-- Batch API helpers and realtime client-secret creation
+- Batch API helpers, JSONL batch submission ergonomics, realtime client-secret creation, and WAV transcription via the realtime API
 - Image inputs and file attachments
 - Image generation, video generation, TTS voice listing, and streaming TTS
 - Structured JSON output with `--json-schema`
@@ -97,7 +99,7 @@ Key options:
 - `--web-search`, `--x-search`, `--code-execution`: enable xAI server-side tools
 - `--allow-domain`, `--exclude-domain`, `--search-images`: web search controls
 - `--x-allow`, `--x-exclude`, `--x-from`, `--x-to`, `--x-images`, `--x-videos`: X search controls
-- `--collection <id>` and `--file-search-mode <mode>`: enable file search over xAI collections
+- `--collection <id>`, `--file-search-mode <mode>`, `--collection-filter <expr>`, `--file-search-results <n>`: enable and tune file search over xAI collections
 - `--include-tool-outputs`, `--show-server-tool-usage`: expose server-side tool output and usage
 - `--mcp <urls...>`: connect remote MCP servers
 - `--mcp-allow <label=tool1,tool2>`: restrict MCP tools per server
@@ -123,6 +125,9 @@ grok-agent --help
 | `models` | List models or inspect a specific model |
 | `memory` | List, search, show, save, and delete persistent long-term memory |
 | `sessions` | List, show, archive, rename, rollback, compact, delete, or clear saved sessions |
+| `tasks` | Inspect and update per-session task boards |
+| `schedule` | Create, list, delete, and run scheduled prompts |
+| `mcp` | List and read resources from configured MCP servers |
 | `review` | Run Grok in code review mode for local changes, branches, or commits |
 | `generate-image` / `imagine` | Generate images |
 | `generate-video` / `video` | Generate video |
@@ -130,7 +135,7 @@ grok-agent --help
 | `tts-voices` | List currently available TTS voices |
 | `collections` | Manage xAI document collections and their documents |
 | `batch` | Create, inspect, cancel, and feed Batch API jobs |
-| `realtime` | Create ephemeral realtime client secrets |
+| `realtime` | Create realtime client secrets or transcribe WAV audio |
 | `doctor` | Validate setup, API key, and session storage |
 | `tokenize` | Count tokens for text |
 | `config` | Show config or create a default config file |
@@ -154,6 +159,16 @@ grok-agent sessions rename <id> "new name"
 grok-agent sessions rollback <id> --turns 2
 grok-agent sessions compact <id>
 grok-agent sessions delete <id>
+
+grok-agent tasks list --session <id>
+grok-agent tasks create --session <id> "Investigate flaky test"
+grok-agent tasks update task-1 --session <id> --status in_progress --owner grok
+
+grok-agent schedule create --cron "0 9 * * 1-5" "summarize overnight CI failures"
+grok-agent schedule run-due
+
+grok-agent mcp resources wiki
+grok-agent mcp read wiki docs://release-notes
 
 grok-agent review --base origin/main
 grok-agent review --commit HEAD~1
@@ -231,7 +246,7 @@ grok-agent -r <session-id>
 Interactive mode also supports slash commands for session control and quick utilities:
 
 ```text
-/session /sessions /usage /name /model /archive /compact /rollback /files
+/session /sessions /tasks /usage /name /model /archive /compact /rollback /files
 ```
 
 ### Research
@@ -242,7 +257,7 @@ grok-agent --web-search "what changed in Node.js 22"
 grok-agent --x-search "what are developers saying about Bun"
 grok-agent --web-search --allow-domain docs.x.ai --search-images "summarize the docs homepage"
 grok-agent --x-search --x-allow xai --x-from 2026-03-01 --x-to 2026-03-29 "recent Grok platform updates"
-grok-agent --collection engineering-handbook "find the deploy checklist"
+grok-agent --collection engineering-handbook --collection-filter 'team = "platform"' "find the deploy checklist"
 ```
 
 ### Images and Files
@@ -270,7 +285,11 @@ grok-agent tts-voices
 grok-agent --mcp https://mcp.deepwiki.com/mcp "explain this repository"
 grok-agent --mcp wiki=https://mcp.deepwiki.com/mcp --mcp custom=https://my-tools.example/mcp "research task"
 grok-agent --mcp wiki=https://mcp.deepwiki.com/mcp --mcp-allow wiki=search,read_page --mcp-desc wiki="Team wiki" "find release notes"
+grok-agent mcp resources wiki
+grok-agent mcp read wiki docs://release-notes
 ```
+
+For local MCP resource inspection, bearer auth can be provided via `GROK_MCP_AUTH_<LABEL>` or `MCP_AUTH_<LABEL>` environment variables.
 
 ### Structured Output and JSON Mode
 
@@ -295,6 +314,8 @@ Common event types:
 - `server_tool.called`
 - `server_tool.usage`
 - `citations`
+- `subagent.started`
+- `subagent.completed`
 - `message`
 - `error`
 - `session.completed`
@@ -330,20 +351,36 @@ The default CLI data dir is `~/.grok`. If you already have data in `~/.grok-cli`
 grok-agent collections list
 grok-agent collections create "Engineering Docs"
 grok-agent collections upload col_123 handbook.pdf
-grok-agent collections search col_123 "on-call rotation policy"
-grok-agent --collection col_123 "summarize the deployment runbook"
+grok-agent collections search col_123 --filter 'team = "platform"' --limit 5 "on-call rotation policy"
+grok-agent --collection col_123 --collection-filter 'team = "platform"' "summarize the deployment runbook"
 ```
 
 Collection management requires `XAI_MANAGEMENT_API_KEY`.
+
+### Tasks, Subagents, and Scheduling
+
+```bash
+grok-agent tasks list --session <id>
+grok-agent tasks create --session <id> "Trace the config merge path"
+grok-agent tasks update task-1 --session <id> --status in_progress --owner grok
+
+grok-agent schedule create --at 2030-01-01T09:00:00-05:00 "review open TODOs"
+grok-agent schedule create --cron "0 9 * * 1-5" "summarize overnight CI failures"
+grok-agent schedule run-due
+```
+
+The agent can also use `todo_write`, `task_*`, and `spawn_subagent` internally during longer multi-step work.
 
 ### Batch + Realtime
 
 ```bash
 grok-agent batch list --limit 20
 grok-agent batch create nightly-evals
+grok-agent batch create-jsonl requests.jsonl nightly-evals
 grok-agent batch add-chat batch_123 "summarize this issue thread"
 grok-agent batch results batch_123 --limit 10
 grok-agent realtime secret --seconds 600
+grok-agent realtime transcribe sample.wav
 ```
 
 ### Tokenization
@@ -513,6 +550,9 @@ src/
 ├── index.ts             CLI entry and subcommands
 ├── agent.ts             Agent loop and interactive mode
 ├── memory.ts            Persistent memory storage and recall
+├── tasks.ts             File-backed task boards
+├── schedules.ts         Scheduled prompt storage and cron logic
+├── mcp-http.ts          Lightweight MCP resource client
 ├── client.ts            xAI client wrapper
 ├── cli-errors.ts        Shared CLI/network/session error formatting
 ├── config.ts            Config and .env loading
@@ -539,6 +579,19 @@ src/
     ├── ask-user-question.ts
     ├── bash.ts
     ├── lsp.ts
+    ├── todo-write.ts
+    ├── task-create.ts
+    ├── task-list.ts
+    ├── task-get.ts
+    ├── task-update.ts
+    ├── schedule-create.ts
+    ├── schedule-list.ts
+    ├── schedule-delete.ts
+    ├── web-fetch.ts
+    ├── notebook-edit.ts
+    ├── mcp-list-resources.ts
+    ├── mcp-read-resource.ts
+    ├── spawn-subagent.ts
     ├── memory-search.ts
     ├── remember-memory.ts
     ├── forget-memory.ts

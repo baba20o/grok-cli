@@ -99,7 +99,9 @@ async function executePreparedToolCall(
     toolCallId: prepared.call.id,
     maxOutputTokens: ctx.config.maxOutputTokens,
     sessionDir: ctx.config.sessionDir,
+    sessionId: ctx.sessionId,
     memorySettings: ctx.config.memory,
+    config: ctx.config,
   });
 
   return {

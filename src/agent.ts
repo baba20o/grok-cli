@@ -30,6 +30,7 @@ import {
   sanitizeResponseText,
 } from "./response-utils.js";
 import { augmentPromptWithMemory } from "./memory.js";
+import { formatTask, listTasks } from "./tasks.js";
 import {
   isJsonMode,
   emitSessionStarted,
@@ -739,7 +740,7 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
     console.error(chalk.bold("Grok CLI") + chalk.dim(` (${activeModel}) — ${sessionId}`));
   }
 
-  console.error(chalk.dim("Commands: /session /sessions /usage /name /model /archive /compact /rollback /files exit\n"));
+  console.error(chalk.dim("Commands: /session /sessions /tasks /usage /name /model /archive /compact /rollback /files exit\n"));
 
   const totalUsage = createUsageStats();
   const hookSessionId = sessionId || runtimeSessionId || `ephemeral-${Date.now().toString(36)}`;
@@ -780,6 +781,18 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
       }
       if (input === "/usage") {
         console.error(formatUsage(activeModel, totalUsage));
+        rl.prompt(); continue;
+      }
+      if (input === "/tasks") {
+        const taskSessionId = sessionId || hookSessionId;
+        const tasks = listTasks(config.sessionDir, taskSessionId);
+        if (tasks.length === 0) {
+          console.error(chalk.dim("No tasks."));
+        } else {
+          for (const task of tasks) {
+            console.error(formatTask(task));
+          }
+        }
         rl.prompt(); continue;
       }
       if (input.startsWith("/name ")) {

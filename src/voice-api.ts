@@ -101,3 +101,116 @@ export async function streamTtsToFile(
   fs.writeFileSync(outputPath, buffer);
   return { bytes: buffer.length, output: outputPath };
 }
+
+function getRealtimeUrl(config: GrokConfig): string {
+  const url = new URL(config.baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/realtime`;
+  return url.toString();
+}
+
+function parsePcmWav(filePath: string): { sampleRate: number; audio: Buffer } {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    throw new Error("Only PCM WAV files are supported for transcription.");
+  }
+
+  let offset = 12;
+  let sampleRate = 0;
+  let channels = 0;
+  let bitsPerSample = 0;
+  let audio: Buffer | null = null;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkData = offset + 8;
+
+    if (chunkId === "fmt ") {
+      const audioFormat = buffer.readUInt16LE(chunkData);
+      channels = buffer.readUInt16LE(chunkData + 2);
+      sampleRate = buffer.readUInt32LE(chunkData + 4);
+      bitsPerSample = buffer.readUInt16LE(chunkData + 14);
+      if (audioFormat !== 1) {
+        throw new Error("Only linear PCM WAV files are supported.");
+      }
+    } else if (chunkId === "data") {
+      audio = buffer.subarray(chunkData, chunkData + chunkSize);
+    }
+
+    offset = chunkData + chunkSize + (chunkSize % 2);
+  }
+
+  if (!audio) throw new Error("WAV file does not contain a data chunk.");
+  if (channels !== 1) throw new Error("Only mono WAV files are supported.");
+  if (bitsPerSample !== 16) throw new Error("Only 16-bit PCM WAV files are supported.");
+  if (!sampleRate) throw new Error("Unable to determine WAV sample rate.");
+
+  return { sampleRate, audio };
+}
+
+export async function transcribeWavFile(
+  config: GrokConfig,
+  filePath: string,
+): Promise<{ transcript: string; sampleRate: number }> {
+  const WS = (globalThis as any).WebSocket;
+  if (!WS) {
+    throw new Error("WebSocket is not available in this Node runtime.");
+  }
+
+  const { sampleRate, audio } = parsePcmWav(path.resolve(filePath));
+  const url = getRealtimeUrl(config);
+
+  return await new Promise<{ transcript: string; sampleRate: number }>((resolve, reject) => {
+    const ws = new WS(url, {
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+    });
+
+    let transcript = "";
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          turn_detection: { type: null },
+          audio: {
+            input: { format: { type: "audio/pcm", rate: sampleRate } },
+            output: { format: { type: "audio/pcm", rate: sampleRate } },
+          },
+        },
+      }));
+
+      const chunkSize = 32 * 1024;
+      for (let offset = 0; offset < audio.length; offset += chunkSize) {
+        ws.send(JSON.stringify({
+          type: "input_audio_buffer.append",
+          audio: audio.subarray(offset, offset + chunkSize).toString("base64"),
+        }));
+      }
+      ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    };
+
+    ws.onmessage = (event: any) => {
+      try {
+        const data = JSON.parse(String(event.data));
+        if (data.type === "conversation.item.input_audio_transcription.completed") {
+          transcript = data.transcript || transcript;
+          resolve({ transcript, sampleRate });
+          ws.close();
+        } else if (data.type === "error") {
+          reject(new Error(data.message || "Realtime transcription failed"));
+          ws.close();
+        }
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        ws.close();
+      }
+    };
+
+    ws.onerror = (event: any) => {
+      reject(new Error(event?.message || "Realtime transcription connection failed"));
+    };
+  });
+}

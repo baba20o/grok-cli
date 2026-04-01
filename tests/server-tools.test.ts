@@ -24,6 +24,7 @@ describe("server tools", () => {
         type: "file_search",
         collectionIds: ["col_a"],
         includeResults: true,
+        metadataFilter: 'author = "alice"',
       },
       {
         type: "file_search",
@@ -46,6 +47,7 @@ describe("server tools", () => {
     assert.deepStrictEqual(tools[1].collectionIds, ["col_a", "col_b"]);
     assert.strictEqual(tools[1].includeResults, true);
     assert.strictEqual(tools[1].retrievalMode, "hybrid");
+    assert.strictEqual(tools[1].metadataFilter, 'author = "alice"');
   });
 
   it("serializes typed tool config and MCP settings for responses", () => {
@@ -78,6 +80,7 @@ describe("server tools", () => {
           retrievalMode: "semantic",
           maxNumResults: 8,
           includeResults: true,
+          metadataFilter: 'author = "alice"',
         },
       ],
       [
@@ -114,6 +117,7 @@ describe("server tools", () => {
         vector_store_ids: ["col_a", "col_b"],
         max_num_results: 8,
         retrieval_mode: { type: "semantic" },
+        filter: 'author = "alice"',
       },
       {
         type: "mcp",

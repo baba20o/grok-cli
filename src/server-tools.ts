@@ -86,6 +86,7 @@ function mergeServerTool(
     existing.retrievalMode = candidate.retrievalMode || existing.retrievalMode;
     existing.maxNumResults = candidate.maxNumResults || existing.maxNumResults;
     existing.includeResults = existing.includeResults || candidate.includeResults;
+    existing.metadataFilter = candidate.metadataFilter || existing.metadataFilter;
     return true;
   }
 
@@ -201,6 +202,7 @@ function serializeFileSearch(tool: FileSearchToolConfig): any {
   if (tool.retrievalMode) {
     entry.retrieval_mode = { type: tool.retrievalMode };
   }
+  if (tool.metadataFilter) entry.filter = tool.metadataFilter;
   return entry;
 }
 

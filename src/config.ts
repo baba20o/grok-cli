@@ -104,6 +104,8 @@ function normalizeMcpServers(value: ConfigFile["mcp_servers"] | undefined): McpS
       url: server.url,
       description: server.description,
       allowedTools: server.allowedTools || [],
+      authToken: server.authToken,
+      authTokenEnv: server.authTokenEnv,
     }));
   }
   return Object.entries(value).map(([label, url]) => ({ label, url }));
@@ -118,6 +120,8 @@ function mergeMcpServers(primary: McpServer[], secondary: McpServer[]): McpServe
       continue;
     }
     existing.description = existing.description || server.description;
+    existing.authToken = existing.authToken || server.authToken;
+    existing.authTokenEnv = existing.authTokenEnv || server.authTokenEnv;
     existing.allowedTools = [
       ...new Set([...(existing.allowedTools || []), ...(server.allowedTools || [])]),
     ];

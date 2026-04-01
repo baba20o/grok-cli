@@ -4,6 +4,22 @@ All notable changes to grok-agent will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Session task boards with `tasks` commands plus new local workflow tools: `todo_write`, `task_create`, `task_list`, `task_get`, and `task_update`.
+- Read-only subagent support via `spawn_subagent` for bounded repo investigation and task ownership handoff.
+- Scheduler support with `schedule create`, `list`, `delete`, and `run-due`, backed by one-shot timestamps or cron expressions.
+- Local `web_fetch`, `notebook_edit`, `mcp_list_resources`, and `mcp_read_resource` tools.
+- User-facing `mcp` commands for listing and reading MCP resources from configured servers.
+- Realtime WAV transcription via `grok-agent realtime transcribe`.
+
+### Changed
+
+- Collection/file search now supports metadata filters and explicit result limits.
+- Batch ergonomics now include `batch create-jsonl` for create-and-populate JSONL workflows.
+- Interactive mode now exposes `/tasks`.
+- README now documents tasks, scheduling, MCP resource inspection, subagents, notebook editing, web fetch, and realtime transcription.
+
 ## [0.6.0] - 2026-04-01
 
 ### Added
