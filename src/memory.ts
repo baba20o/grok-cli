@@ -18,6 +18,38 @@ const INDEX_LINE_LIMIT = 120;
 const INDEX_BYTE_LIMIT = 12_000;
 const BODY_SNIPPET_LIMIT = 1_400;
 const MAX_SELECTOR_CANDIDATES = 24;
+const MEMORY_QUERY_STOPWORDS = new Set([
+  "about",
+  "also",
+  "does",
+  "from",
+  "give",
+  "have",
+  "into",
+  "just",
+  "make",
+  "only",
+  "please",
+  "reply",
+  "should",
+  "tell",
+  "that",
+  "their",
+  "them",
+  "there",
+  "these",
+  "this",
+  "those",
+  "using",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "would",
+  "your",
+]);
 
 type SearchOptions = {
   scope?: MemoryScope | "all";
@@ -249,7 +281,7 @@ function tokenizeQuery(query: string): string[] {
     new Set(
       query
         .toLowerCase()
-        .match(/[a-z0-9_./-]{3,}/g) || [],
+        .match(/[a-z0-9_./-]{3,}/g)?.filter((token) => !MEMORY_QUERY_STOPWORDS.has(token)) || [],
     ),
   );
 }
@@ -263,17 +295,43 @@ function scoreMemory(entry: MemoryEntry, query: string): number {
   const content = entry.content.toLowerCase();
   const tokens = tokenizeQuery(query);
   let score = 0;
+  let hasLexicalMatch = false;
 
-  if (title.includes(normalizedQuery)) score += 30;
-  if (description.includes(normalizedQuery)) score += 20;
-  if (content.includes(normalizedQuery)) score += 10;
+  if (title.includes(normalizedQuery)) {
+    score += 30;
+    hasLexicalMatch = true;
+  }
+  if (description.includes(normalizedQuery)) {
+    score += 20;
+    hasLexicalMatch = true;
+  }
+  if (content.includes(normalizedQuery)) {
+    score += 10;
+    hasLexicalMatch = true;
+  }
 
   for (const token of tokens) {
-    if (title.includes(token)) score += 8;
-    if (description.includes(token)) score += 5;
-    if (entry.type.includes(token as never)) score += 3;
-    if (content.includes(token)) score += 1;
+    let matched = false;
+    if (title.includes(token)) {
+      score += 8;
+      matched = true;
+    }
+    if (description.includes(token)) {
+      score += 5;
+      matched = true;
+    }
+    if (entry.type.includes(token as never)) {
+      score += 3;
+      matched = true;
+    }
+    if (content.includes(token)) {
+      score += 1;
+      matched = true;
+    }
+    if (matched) hasLexicalMatch = true;
   }
+
+  if (!hasLexicalMatch) return 0;
 
   const ageDays = (Date.now() - new Date(entry.updated).getTime()) / 86_400_000;
   score += Math.max(0, 2 - ageDays / 60);

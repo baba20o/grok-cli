@@ -71,6 +71,28 @@ describe("memory", () => {
     assert.ok(prepared.prompt.includes("Testing preference"));
   });
 
+  it("does not recall unrelated memory just because it is recent", async () => {
+    const prepared = await augmentPromptWithMemory(
+      {
+        sessionDir: testBaseDir,
+        convId: null,
+        memory: {
+          enabled: true,
+          autoRecall: true,
+          useSemanticRecall: false,
+          recallLimit: 2,
+          selectorModel: "unused",
+          defaultScope: "project",
+        },
+      } as any,
+      projectDir,
+      "In one sentence, what does xAI do?",
+    );
+
+    assert.strictEqual(prepared.recall, null);
+    assert.strictEqual(prepared.prompt, "In one sentence, what does xAI do?");
+  });
+
   it("lists counts and forgets memory entries", () => {
     const all = listMemories(testBaseDir, projectDir, "all");
     assert.ok(all.length >= 2);

@@ -1,9 +1,11 @@
 import assert from "node:assert";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { executeTool } from "../src/tools/index.js";
+import { executeWebFetch } from "../src/tools/web-fetch.js";
 import {
   createSchedule,
   dueSchedules,
@@ -21,6 +23,7 @@ let webServer: http.Server;
 let webBaseUrl = "";
 let mcpServer: http.Server;
 let mcpBaseUrl = "";
+const hasCurl = spawnSync("curl", ["--version"], { stdio: "ignore" }).status === 0;
 
 before(async () => {
   webServer = http.createServer((_req, res) => {
@@ -186,6 +189,25 @@ describe("workflow tools", () => {
     assert.ok(!result.error, result.output);
     assert.ok(result.output.includes("Example Page"));
     assert.ok(result.output.includes("Fetched content body."));
+  });
+
+  it("falls back to curl when Node fetch fails", async () => {
+    if (!hasCurl) return;
+
+    const originalFetch = globalThis.fetch;
+    const failingFetch = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = failingFetch;
+
+    try {
+      const result = await executeWebFetch({ url: webBaseUrl }, testDir, {});
+      assert.ok(!result.error, result.output);
+      assert.ok(result.output.includes("Example Page"));
+      assert.ok(result.output.includes("Fetched content body."));
+    } finally {
+      (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    }
   });
 
   it("inspects and edits notebooks at cell granularity", async () => {
