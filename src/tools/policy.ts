@@ -10,14 +10,16 @@ export function ensurePathAllowed(
   projectCwd: string,
   sandboxMode: SandboxMode,
   access: "read" | "write",
+  allowedRoots: string[] = [],
 ): ToolResult | null {
   if (sandboxMode === "danger-full-access") return null;
 
   const resolvedPath = normalizePath(inputPath);
-  const root = normalizePath(projectCwd);
-  const relative = path.relative(root, resolvedPath);
-  const outsideWorkspace =
-    relative.startsWith("..") || path.isAbsolute(relative) && !resolvedPath.startsWith(root);
+  const roots = [normalizePath(projectCwd), ...allowedRoots.map(normalizePath)];
+  const outsideWorkspace = roots.every((root) => {
+    const relative = path.relative(root, resolvedPath);
+    return relative.startsWith("..") || (path.isAbsolute(relative) && !resolvedPath.startsWith(root));
+  });
 
   if (outsideWorkspace) {
     return {

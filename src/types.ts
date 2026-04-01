@@ -5,6 +5,53 @@ export type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;
 export type ToolDef = OpenAI.Chat.Completions.ChatCompletionTool;
 export type StreamChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 
+export interface PersistedToolOutput {
+  path: string;
+  originalBytes: number;
+  previewBytes: number;
+}
+
+export interface TruncatedToolOutput {
+  estimatedTokens: number;
+  maxTokens: number;
+  originalChars: number;
+}
+
+export interface ToolResultMetadata {
+  persisted?: PersistedToolOutput;
+  truncated?: TruncatedToolOutput;
+}
+
+export type MemoryScope = "project" | "user";
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface MemorySettings {
+  enabled: boolean;
+  autoRecall: boolean;
+  useSemanticRecall: boolean;
+  recallLimit: number;
+  selectorModel: string;
+  defaultScope: MemoryScope;
+}
+
+export interface MemoryEntry {
+  id: string;
+  scope: MemoryScope;
+  type: MemoryType;
+  title: string;
+  description: string;
+  filePath: string;
+  relativePath: string;
+  created: string;
+  updated: string;
+  content: string;
+}
+
+export interface MemoryRecallResult {
+  entries: MemoryEntry[];
+  strategy: "heuristic" | "semantic";
+}
+
 export interface GrokConfig {
   apiKey: string;
   managementApiKey: string;
@@ -40,6 +87,7 @@ export interface GrokConfig {
   outputFile: string | null;
   color: "auto" | "always" | "never";
   maxOutputTokens: number;
+  memory: MemorySettings;
 }
 
 export type ApprovalPolicy = "always-approve" | "ask" | "deny-writes";
@@ -109,6 +157,7 @@ export interface HooksConfig {
 export interface ToolResult {
   output: string;
   error?: boolean;
+  metadata?: ToolResultMetadata;
 }
 
 // --- Session Types ---
@@ -181,4 +230,12 @@ export interface ConfigFile {
   tool_approvals?: ToolApprovalSettings;
   include_tool_outputs?: boolean;
   server_tools?: Array<ServerToolKind | ServerToolConfig>;
+  memory?: {
+    enabled?: boolean;
+    auto_recall?: boolean;
+    use_semantic_recall?: boolean;
+    recall_limit?: number;
+    selector_model?: string;
+    default_scope?: MemoryScope;
+  };
 }

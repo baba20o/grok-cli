@@ -11,7 +11,13 @@ export async function executeGlob(args: {
   cwd?: string;
 }, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const cwd = args.cwd ? path.resolve(projectCwd, args.cwd) : projectCwd;
-  const sandboxError = ensurePathAllowed(cwd, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  const sandboxError = ensurePathAllowed(
+    cwd,
+    projectCwd,
+    options.sandboxMode || "danger-full-access",
+    "read",
+    options.allowedReadRoots,
+  );
   if (sandboxError) return sandboxError;
 
   try {

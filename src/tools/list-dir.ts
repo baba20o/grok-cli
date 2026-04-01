@@ -11,7 +11,13 @@ export async function executeListDir(args: {
   recursive?: boolean;
 }, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const dirPath = args.path ? path.resolve(projectCwd, args.path) : projectCwd;
-  const sandboxError = ensurePathAllowed(dirPath, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  const sandboxError = ensurePathAllowed(
+    dirPath,
+    projectCwd,
+    options.sandboxMode || "danger-full-access",
+    "read",
+    options.allowedReadRoots,
+  );
   if (sandboxError) return sandboxError;
 
   try {

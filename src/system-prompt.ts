@@ -1,6 +1,7 @@
 import os from "node:os";
 import type { GrokConfig } from "./types.js";
 import { loadProjectContext } from "./project-context.js";
+import { buildMemoryGuidance } from "./memory.js";
 import { describeServerTools } from "./server-tools.js";
 
 export function buildSystemPrompt(cwd: string, config?: GrokConfig): string {
@@ -19,6 +20,9 @@ You help users with software engineering tasks: fixing bugs, adding features, re
 # Tools
 You have local tools that execute on the user's machine:
 - **bash**: Run shell commands. Use for git, npm, building, testing, etc.
+- **memory_search**: Search persistent long-term memory from previous sessions.
+- **remember_memory**: Save durable preferences, feedback, or project facts for future sessions.
+- **forget_memory**: Remove stale or incorrect stored memory.
 - **read_file**: Read file contents with optional line range.
 - **write_file**: Create or overwrite files.
 - **edit_file**: Make targeted find-and-replace edits. Always read a file before editing.
@@ -59,6 +63,11 @@ You have local tools that execute on the user's machine:
 # Security
 - Never commit or display secrets/API keys/passwords.
 - Don't run destructive commands without explicit user approval.`;
+
+  const memoryGuidance = config ? buildMemoryGuidance(config, cwd) : null;
+  if (memoryGuidance) {
+    prompt += `\n\n${memoryGuidance}`;
+  }
 
   // Load project context (GROK.md, .grokrc)
   const projectCtx = loadProjectContext(cwd);

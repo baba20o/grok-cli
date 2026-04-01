@@ -4,8 +4,17 @@ import type { ApprovalPolicy, GrokConfig, ToolApprovalMode } from "./types.js";
 
 const approvalCache = new Map<string, boolean>();
 
-const ALWAYS_SAFE = new Set(["read_file", "glob", "grep", "list_directory"]);
-const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+const ALWAYS_SAFE = new Set([
+  "read_file",
+  "glob",
+  "grep",
+  "list_directory",
+  "ask_user_question",
+  "lsp",
+  "tool_search",
+  "memory_search",
+]);
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "remember_memory", "forget_memory"]);
 const EXEC_TOOLS = new Set(["bash"]);
 
 function cacheKey(tool: string, args: string): string {
@@ -20,6 +29,13 @@ function cacheKey(tool: string, args: string): string {
   if (tool === "write_file" || tool === "edit_file") {
     try {
       return `${tool}:${JSON.parse(args)?.file_path}`;
+    } catch {
+      return `${tool}:?`;
+    }
+  }
+  if (tool === "remember_memory" || tool === "forget_memory") {
+    try {
+      return `${tool}:${JSON.parse(args)?.id || JSON.parse(args)?.title || "?"}`;
     } catch {
       return `${tool}:?`;
     }
@@ -64,6 +80,8 @@ export async function checkApproval(
     if (toolName === "bash") summary = `bash: ${args.command}`;
     else if (toolName === "write_file") summary = `write: ${args.file_path}`;
     else if (toolName === "edit_file") summary = `edit: ${args.file_path}`;
+    else if (toolName === "remember_memory") summary = `remember: ${args.title || args.id || "memory"}`;
+    else if (toolName === "forget_memory") summary = `forget: ${args.id || "memory"}`;
   } catch {
     // Ignore parse errors in prompt summary.
   }

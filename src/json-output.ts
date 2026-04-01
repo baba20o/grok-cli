@@ -70,6 +70,20 @@ export function emitServerToolUsage(usage: Record<string, number>): void {
   emitEvent({ type: "server_tool.usage", usage });
 }
 
+export function emitMemoryRecalled(recall: {
+  strategy: string;
+  entries: Array<{
+    id: string;
+    scope: string;
+    type: string;
+    title: string;
+    description: string;
+    updated: string;
+  }>;
+}): void {
+  emitEvent({ type: "memory.recalled", ...recall });
+}
+
 export function emitError(message: string): void {
   emitEvent({ type: "error", message });
 }

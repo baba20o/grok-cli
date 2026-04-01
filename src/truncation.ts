@@ -3,6 +3,8 @@
  * Prevents massive tool outputs from blowing the context window.
  */
 
+import type { TruncatedToolOutput } from "./types.js";
+
 // Rough approximation: ~4 chars per token for English text
 const CHARS_PER_TOKEN = 4;
 
@@ -26,8 +28,21 @@ export function truncateOutput(
   output: string,
   maxTokens: number = 8000,
 ): string {
+  return truncateOutputDetailed(output, maxTokens).output;
+}
+
+export function truncateOutputDetailed(
+  output: string,
+  maxTokens: number = 8000,
+): { output: string; metadata?: TruncatedToolOutput } {
   const estimatedTokens = approxTokenCount(output);
-  if (estimatedTokens <= maxTokens) return output;
+  if (estimatedTokens <= maxTokens) return { output };
+
+  const metadata: TruncatedToolOutput = {
+    estimatedTokens,
+    maxTokens,
+    originalChars: output.length,
+  };
 
   const maxChars = maxTokens * CHARS_PER_TOKEN;
   const keepStart = Math.floor(maxChars * 0.6); // 60% from start
@@ -54,12 +69,21 @@ export function truncateOutput(
 
   if (startLineEnd >= endLineStart) {
     // Overlap — just hard truncate
-    return output.slice(0, maxChars) + `\n\n[... truncated, ${totalLines} total lines, ~${estimatedTokens} tokens]`;
+    return {
+      output:
+        output.slice(0, maxChars) +
+        `\n\n[... truncated, ${totalLines} total lines, ~${estimatedTokens} tokens]`,
+      metadata,
+    };
   }
 
   const omitted = endLineStart - startLineEnd;
   const head = lines.slice(0, startLineEnd).join("\n");
   const tail = lines.slice(endLineStart).join("\n");
 
-  return `${head}\n\n[... ${omitted} lines omitted, ${totalLines} total lines, ~${estimatedTokens} tokens ...]\n\n${tail}`;
+  return {
+    output:
+      `${head}\n\n[... ${omitted} lines omitted, ${totalLines} total lines, ~${estimatedTokens} tokens ...]\n\n${tail}`,
+    metadata,
+  };
 }

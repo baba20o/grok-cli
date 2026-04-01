@@ -17,7 +17,13 @@ export async function executeGrep(args: {
 }, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const searchPath = args.path ? path.resolve(projectCwd, args.path) : projectCwd;
   const maxResults = Math.min(args.max_results || MAX_RESULTS, 500);
-  const sandboxError = ensurePathAllowed(searchPath, projectCwd, options.sandboxMode || "danger-full-access", "read");
+  const sandboxError = ensurePathAllowed(
+    searchPath,
+    projectCwd,
+    options.sandboxMode || "danger-full-access",
+    "read",
+    options.allowedReadRoots,
+  );
   if (sandboxError) return sandboxError;
 
   try {

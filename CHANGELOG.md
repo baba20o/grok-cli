@@ -10,6 +10,10 @@ All notable changes to grok-agent will be documented in this file.
 - Web search and X search filters: allowed/excluded domains, X handles, date ranges, and image/video understanding flags.
 - Collection-backed file search on the main chat path via `--collection` and `--file-search-mode`.
 - Expanded `collections` command set: `get`, `update`, `delete`, `docs`, `upload`, `rm-doc`, and `search`.
+- Persistent memory: `memory list`, `show`, `search`, `remember`, and `forget`, backed by markdown files and `MEMORY.md` indexes in project/user scopes.
+- New local tools: `memory_search`, `remember_memory`, and `forget_memory`.
+- Automatic relevant-memory injection on new user turns, with JSONL `memory.recalled` events.
+- TypeScript/JavaScript semantic navigation tool (`lsp`), explicit clarification tool (`ask_user_question`), and capability discovery tool (`tool_search`).
 - Batch API helpers: `batch create`, `list`, `status`, `requests`, `results`, `cancel`, `add-chat`, and `add-jsonl`.
 - Realtime API helper: `realtime secret`.
 - Session lifecycle commands: `archive`, `unarchive`, `rename`, `rollback`, and `compact`.
@@ -21,8 +25,9 @@ All notable changes to grok-agent will be documented in this file.
 ### Changed
 
 - Responses API requests now serialize local function tools in xAI's native Responses format.
+- Local tool execution now shares one orchestration pipeline, supports concurrency-safe read batches, and persists oversized tool outputs to disk.
 - Session storage now tracks archived sessions and preserves pre-turn setup messages when rolling back turns.
-- Config loading now supports management API settings, MCP metadata, typed server tools, sandbox defaults, and tool approval overrides.
+- Config loading now supports management API settings, MCP metadata, typed server tools, sandbox defaults, tool approval overrides, and memory settings.
 - README and command help were updated to match the expanded CLI surface.
 
 ## [0.4.0] - 2026-03-29

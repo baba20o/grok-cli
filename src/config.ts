@@ -7,6 +7,7 @@ import type {
   ConfigFile,
   GrokConfig,
   McpServer,
+  MemoryScope,
   SandboxMode,
   ServerToolConfig,
   ServerToolKind,
@@ -32,6 +33,14 @@ const MODELS = {
   multiAgent: "grok-4.20-multi-agent-0309",
   code: "grok-code-fast-1",
 } as const;
+
+function readEnvBoolean(name: string): boolean | undefined {
+  const value = process.env[name];
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
+  if (["0", "false", "no", "off"].includes(value.toLowerCase())) return false;
+  return undefined;
+}
 
 function getBaseDir(): string {
   return process.env.GROK_SESSION_DIR || path.join(os.homedir(), ".grok-cli");
@@ -80,6 +89,10 @@ function mergeMcpServers(primary: McpServer[], secondary: McpServer[]): McpServe
   return merged;
 }
 
+function resolveMemoryScope(value: string | undefined): MemoryScope {
+  return value === "user" ? "user" : "project";
+}
+
 export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
   const fileConfig = loadConfigFile();
   const jsonOutput = overrides.jsonOutput ?? false;
@@ -120,6 +133,35 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     fileConfig.sandbox_mode ||
     (process.env.GROK_SANDBOX_MODE as SandboxMode | undefined) ||
     "danger-full-access";
+
+  const fileMemory = fileConfig.memory || {};
+  const memory = {
+    enabled: overrides.memory?.enabled ??
+      fileMemory.enabled ??
+      readEnvBoolean("GROK_MEMORY_ENABLED") ??
+      true,
+    autoRecall: overrides.memory?.autoRecall ??
+      fileMemory.auto_recall ??
+      readEnvBoolean("GROK_MEMORY_AUTO_RECALL") ??
+      true,
+    useSemanticRecall: overrides.memory?.useSemanticRecall ??
+      fileMemory.use_semantic_recall ??
+      readEnvBoolean("GROK_MEMORY_SEMANTIC_RECALL") ??
+      true,
+    recallLimit: overrides.memory?.recallLimit ??
+      fileMemory.recall_limit ??
+      (process.env.GROK_MEMORY_RECALL_LIMIT ? parseInt(process.env.GROK_MEMORY_RECALL_LIMIT, 10) : undefined) ??
+      3,
+    selectorModel: overrides.memory?.selectorModel ??
+      fileMemory.selector_model ??
+      process.env.GROK_MEMORY_SELECTOR_MODEL ??
+      MODELS.fast,
+    defaultScope: resolveMemoryScope(
+      overrides.memory?.defaultScope ||
+      fileMemory.default_scope ||
+      process.env.GROK_MEMORY_DEFAULT_SCOPE,
+    ),
+  };
 
   return {
     apiKey,
@@ -165,6 +207,7 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     outputFile: overrides.outputFile || null,
     color: overrides.color || "auto",
     maxOutputTokens: overrides.maxOutputTokens || 8000,
+    memory,
   };
 }
 

@@ -19,7 +19,7 @@ describe("approvals", () => {
     assert.strictEqual(allowed, true);
   });
 
-  it("respects deny-writes for write and shell tools", async () => {
+  it("respects deny-writes for write, memory, and shell tools", async () => {
     const writeAllowed = await checkApproval(
       {
         approvalPolicy: "deny-writes",
@@ -36,8 +36,26 @@ describe("approvals", () => {
       "bash",
       JSON.stringify({ command: "echo nope" }),
     );
+    const rememberAllowed = await checkApproval(
+      {
+        approvalPolicy: "deny-writes",
+        toolApprovals: { tools: {} },
+      } as any,
+      "remember_memory",
+      JSON.stringify({ title: "style", content: "be concise" }),
+    );
+    const forgetAllowed = await checkApproval(
+      {
+        approvalPolicy: "deny-writes",
+        toolApprovals: { tools: {} },
+      } as any,
+      "forget_memory",
+      JSON.stringify({ id: "style" }),
+    );
     assert.strictEqual(writeAllowed, false);
     assert.strictEqual(bashAllowed, false);
+    assert.strictEqual(rememberAllowed, false);
+    assert.strictEqual(forgetAllowed, false);
   });
 
   it("applies explicit per-tool overrides", async () => {

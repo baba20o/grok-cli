@@ -15,7 +15,13 @@ export async function executeEditFile(args: {
   replace_all?: boolean;
 }, projectCwd: string, options: ToolExecutionOptions): Promise<ToolResult> {
   const filePath = path.resolve(projectCwd, args.file_path);
-  const sandboxError = ensurePathAllowed(filePath, projectCwd, options.sandboxMode || "danger-full-access", "write");
+  const sandboxError = ensurePathAllowed(
+    filePath,
+    projectCwd,
+    options.sandboxMode || "danger-full-access",
+    "write",
+    options.allowedReadRoots,
+  );
   if (sandboxError) return sandboxError;
 
   try {

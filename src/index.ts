@@ -20,6 +20,16 @@ import { approxTokenCount } from "./truncation.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { compactConversation } from "./compaction.js";
 import {
+  countMemories,
+  forgetMemory,
+  formatMemorySummary,
+  getMemoryDirs,
+  listMemories,
+  rememberMemory,
+  resolveMemoryRef,
+  searchMemories,
+} from "./memory.js";
+import {
   createCollection,
   deleteCollection,
   getCollection,
@@ -49,6 +59,7 @@ import {
 import type {
   AgentOptions,
   GrokConfig,
+  MemoryScope,
   McpServer,
   ServerToolConfig,
   SessionEvent,
@@ -512,6 +523,121 @@ sessionsCmd.command("compact <id>").description("Compact a session's history wit
     loaded.meta.updated = new Date().toISOString();
     mgr.rewriteSession(id, sessionEventsFromMessages(loaded.meta, compacted));
     console.log(chalk.green(`Compacted session: ${id}`));
+  });
+
+const memoryCmd = program.command("memory").description("Manage persistent memory");
+
+memoryCmd.command("list").alias("ls").description("List stored memories")
+  .option("--scope <scope>", "Memory scope: project, user, all", "all")
+  .option("--limit <n>", "Max memories to show", "20")
+  .action((opts: any) => {
+    const config = getConfig();
+    const cwd = getCommandCwd();
+    const scope = parseMemoryScopeOrExit(opts.scope, true);
+    const entries = listMemories(config.sessionDir, cwd, scope).slice(0, parseInt(opts.limit, 10));
+    if (entries.length === 0) {
+      console.log(chalk.dim("No memories."));
+      return;
+    }
+    for (const entry of entries) {
+      console.log(formatMemorySummary(entry));
+      console.log("");
+    }
+  });
+
+memoryCmd.command("show <ref>").description("Show a stored memory")
+  .option("--scope <scope>", "Memory scope: project, user, all", "all")
+  .action((ref: string, opts: any) => {
+    const config = getConfig();
+    const cwd = getCommandCwd();
+    const scope = parseMemoryScopeOrExit(opts.scope, true);
+    const entry = resolveMemoryRef(config.sessionDir, cwd, ref, scope);
+    if (!entry) {
+      console.error(chalk.red(`Memory not found: ${ref}`));
+      process.exit(1);
+    }
+    console.log(formatMemorySummary(entry));
+    if (entry.content) {
+      console.log("");
+      console.log(entry.content);
+    }
+  });
+
+memoryCmd.command("search <query...>").description("Search stored memory")
+  .option("--scope <scope>", "Memory scope: project, user, all", "all")
+  .option("--limit <n>", "Max memories to show", "5")
+  .option("--full", "Include content previews")
+  .action((queryParts: string[], opts: any) => {
+    const config = getConfig();
+    const cwd = getCommandCwd();
+    const scope = parseMemoryScopeOrExit(opts.scope, true);
+    const entries = searchMemories(config.sessionDir, cwd, queryParts.join(" "), {
+      scope,
+      limit: parseInt(opts.limit, 10),
+    });
+    if (entries.length === 0) {
+      console.log(chalk.dim("No matching memories."));
+      return;
+    }
+    for (const entry of entries) {
+      console.log(formatMemorySummary(entry, !!opts.full));
+      console.log("");
+    }
+  });
+
+memoryCmd.command("remember <title...>").description("Save long-term memory")
+  .option("--scope <scope>", "Memory scope: project or user")
+  .option("--type <type>", "Memory type: user, feedback, project, reference")
+  .option("--description <text>", "One-line summary for the index")
+  .option("--body <text>", "Detailed memory content")
+  .option("--id <id>", "Update an existing memory by id")
+  .action(async (titleParts: string[], opts: any) => {
+    const config = getConfig();
+    const cwd = getCommandCwd();
+    const title = titleParts.join(" ").trim();
+    if (!title) {
+      console.error(chalk.red("Title is required."));
+      process.exit(1);
+    }
+
+    let body = String(opts.body || "").trim();
+    if (!body && !process.stdin.isTTY) {
+      body = await readStdin();
+    }
+    if (!body) {
+      body = String(opts.description || title).trim();
+    }
+
+    const scope = parseMemoryScopeOrExit(
+      opts.scope || config.memory.defaultScope,
+      false,
+    ) as MemoryScope;
+    const type = parseMemoryTypeOrExit(opts.type || undefined, scope);
+    const entry = rememberMemory(config.sessionDir, cwd, {
+      id: opts.id ? String(opts.id) : undefined,
+      title,
+      description: opts.description ? String(opts.description) : undefined,
+      content: body,
+      scope,
+      type,
+    });
+
+    console.log(chalk.green(`Saved: ${entry.id}`));
+    console.log(chalk.dim(entry.filePath));
+  });
+
+memoryCmd.command("forget <ref>").description("Delete stored memory")
+  .option("--scope <scope>", "Memory scope: project, user, all", "all")
+  .action((ref: string, opts: any) => {
+    const config = getConfig();
+    const cwd = getCommandCwd();
+    const scope = parseMemoryScopeOrExit(opts.scope, true);
+    const deleted = forgetMemory(config.sessionDir, cwd, ref, scope);
+    if (!deleted) {
+      console.error(chalk.red(`Memory not found: ${ref}`));
+      process.exit(1);
+    }
+    console.log(chalk.green(`Deleted: ${deleted.id}`));
   });
 
 const reviewCmd = program.command("review").description("Run Grok in code review mode")
@@ -992,6 +1118,7 @@ program.command("doctor").description("Check setup and API key")
     console.log(chalk.bold("Model: ") + config.model);
     console.log(chalk.bold("Sandbox: ") + config.sandboxMode);
     console.log(chalk.bold("Session Dir: ") + config.sessionDir);
+    console.log(chalk.bold("Memory: ") + (config.memory.enabled ? chalk.green("enabled") : chalk.dim("disabled")));
 
     const configPath = path.join(config.sessionDir, "config.json");
     console.log(chalk.bold("Config File: ") + (fs.existsSync(configPath) ? chalk.green(configPath) : chalk.dim("not found")));
@@ -1043,6 +1170,12 @@ program.command("doctor").description("Check setup and API key")
       console.log(chalk.bold("\nSessions: ") + chalk.red("unavailable"));
       console.log(chalk.dim(`  ${formatSessionDirError(config.sessionDir, err)}`));
     }
+
+    const memoryDirs = getMemoryDirs(config.sessionDir, process.cwd());
+    const memoryCounts = countMemories(config.sessionDir, process.cwd());
+    console.log(chalk.bold("\nMemory: "));
+    console.log(chalk.dim(`  User: ${memoryCounts.user} (${memoryDirs.user})`));
+    console.log(chalk.dim(`  Project: ${memoryCounts.project} (${memoryDirs.project})`));
   });
 
 program.command("tokenize").description("Count tokens in text")
@@ -1115,6 +1248,14 @@ program.command("config").description("Show or edit configuration")
         tool_approvals: {
           tools: {},
         },
+        memory: {
+          enabled: true,
+          auto_recall: true,
+          use_semantic_recall: true,
+          recall_limit: 3,
+          selector_model: MODELS.fast,
+          default_scope: "project",
+        },
         hooks: {},
       };
       fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2) + "\n", "utf-8");
@@ -1133,6 +1274,12 @@ program.command("config").description("Show or edit configuration")
     console.log(chalk.dim(`Include tool outputs: ${config.includeToolOutputs}`));
     console.log(chalk.dim(`Notify: ${config.notify}`));
     console.log(chalk.dim(`Max turns: ${config.maxToolRounds}`));
+    console.log(chalk.dim(`Memory enabled: ${config.memory.enabled}`));
+    console.log(chalk.dim(`Memory auto recall: ${config.memory.autoRecall}`));
+    console.log(chalk.dim(`Memory semantic recall: ${config.memory.useSemanticRecall}`));
+    console.log(chalk.dim(`Memory recall limit: ${config.memory.recallLimit}`));
+    console.log(chalk.dim(`Memory selector model: ${config.memory.selectorModel}`));
+    console.log(chalk.dim(`Memory default scope: ${config.memory.defaultScope}`));
     if (config.serverTools.length > 0) {
       console.log(chalk.dim(`Server tools: ${JSON.stringify(config.serverTools)}`));
     }
@@ -1272,6 +1419,33 @@ function buildReviewPrompt(opts: {
     : "";
 
   return `Review ${target}. Focus on bugs, regressions, risky assumptions, missing tests, and behavior changes. Use tools to inspect the relevant diff and source files. Present findings first, ordered by severity, with file and line references when possible. Keep summaries brief.${instructions}`;
+}
+
+function getCommandCwd(): string {
+  return ((program.opts() as any)?.cwd as string | undefined) || process.cwd();
+}
+
+function parseMemoryScopeOrExit(
+  value: string | undefined,
+  allowAll: boolean,
+): MemoryScope | "all" {
+  const scope = (value || (allowAll ? "all" : "project")).toLowerCase();
+  if (scope === "project" || scope === "user") return scope;
+  if (allowAll && scope === "all") return "all";
+  console.error(chalk.red(`Invalid memory scope: ${value}`));
+  process.exit(1);
+}
+
+function parseMemoryTypeOrExit(
+  value: string | undefined,
+  scope: MemoryScope,
+): "user" | "feedback" | "project" | "reference" {
+  if (!value) return scope === "user" ? "user" : "project";
+  if (value === "user" || value === "feedback" || value === "project" || value === "reference") {
+    return value;
+  }
+  console.error(chalk.red(`Invalid memory type: ${value}`));
+  process.exit(1);
 }
 
 function trunc(s: string, n: number): string {

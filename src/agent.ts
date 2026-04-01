@@ -7,8 +7,6 @@ import { toolDefinitions, executeTool, setMaxOutputTokens } from "./tools/index.
 import {
   createAccumulator,
   processChunk,
-  formatToolCall,
-  formatToolResult,
 } from "./stream.js";
 import { SessionManager } from "./session.js";
 import { getImageDataUrl, buildImageMessageContent, buildImageInputContent } from "./image.js";
@@ -20,27 +18,27 @@ import {
   formatUsage,
   type UsageStats,
 } from "./usage.js";
-import { checkApproval } from "./approvals.js";
 import { runHooks } from "./hooks.js";
 import { needsCompaction, compactConversation } from "./compaction.js";
 import { formatApiError } from "./cli-errors.js";
 import { collectResponseIncludes, serializeServerTools } from "./server-tools.js";
+import { runLocalToolCalls } from "./tool-runner.js";
 import {
   extractCitationsFromContent,
   extractServerToolUsage,
   getServerToolEvent,
   sanitizeResponseText,
 } from "./response-utils.js";
+import { augmentPromptWithMemory } from "./memory.js";
 import {
   isJsonMode,
   emitSessionStarted,
   emitTurnStarted,
   emitTurnCompleted,
-  emitToolCall,
-  emitToolResult,
   emitServerToolCall,
   emitServerToolUsage,
   emitCitations,
+  emitMemoryRecalled,
   emitMessage,
   emitError,
   emitSessionCompleted,
@@ -77,6 +75,41 @@ function logServerToolUsage(config: GrokConfig, response: any): void {
       console.error(chalk.dim(`Server tools: ${summary}`));
     }
   }
+}
+
+function logMemoryRecall(
+  recall: Awaited<ReturnType<typeof augmentPromptWithMemory>>["recall"],
+  verbose: boolean,
+): void {
+  if (!recall || recall.entries.length === 0) return;
+
+  emitMemoryRecalled({
+    strategy: recall.strategy,
+    entries: recall.entries.map((entry) => ({
+      id: entry.id,
+      scope: entry.scope,
+      type: entry.type,
+      title: entry.title,
+      description: entry.description,
+      updated: entry.updated,
+    })),
+  });
+
+  if (verbose && !isJsonMode()) {
+    const titles = recall.entries.map((entry) => entry.title).join(", ");
+    console.error(chalk.dim(`Memory recall (${recall.strategy}): ${titles}`));
+  }
+}
+
+async function preparePromptForTurn(
+  config: GrokConfig,
+  cwd: string,
+  prompt: string,
+  verbose: boolean,
+): Promise<string> {
+  const prepared = await augmentPromptWithMemory(config, cwd, prompt);
+  logMemoryRecall(prepared.recall, verbose);
+  return prepared.prompt;
 }
 
 function countTurns(messages: ChatMessage[]): number {
@@ -157,6 +190,7 @@ async function runChatLoop(
   messages: ChatMessage[],
   options: AgentOptions,
   session: { manager: SessionManager; id: string } | null,
+  toolSessionId: string,
 ): Promise<string> {
   const client = createClient(config);
   const tools: ToolDef[] = [...toolDefinitions];
@@ -273,38 +307,17 @@ async function runChatLoop(
 
     if (showOutput && acc.content) process.stdout.write("\n");
 
-    for (const tc of serializedCalls) {
-      emitToolCall(tc.name, tc.arguments, tc.id);
-      if (config.showToolCalls && !jsonMode) {
-        console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
-      }
+    const executed = await runLocalToolCalls(serializedCalls, {
+      config,
+      cwd: options.cwd,
+      verbose: options.verbose,
+      showToolCalls: config.showToolCalls && !jsonMode,
+      session,
+      sessionId: toolSessionId,
+    });
 
-      // Approval check
-      const approved = await checkApproval(config, tc.name, tc.arguments);
-      if (!approved) {
-        messages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
-        continue;
-      }
-
-      // Pre-tool hook
-      runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: session?.id });
-
-      const result = await executeTool(tc.name, tc.arguments, options.cwd, {
-        sandboxMode: config.sandboxMode,
-      });
-      if (config.showToolCalls && !jsonMode) {
-        console.error(formatToolResult(result.output, result.error || false));
-      }
-
-      // Post-tool hook
-      runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: session?.id });
-      emitToolResult(tc.id, result.output, result.error || false);
-
-      if (session) {
-        session.manager.appendToolExec(session.id, tc.name, tc.arguments, result.output, result.error || false);
-        session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: tc.id });
-      }
-      messages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
+    for (const item of executed) {
+      messages.push({ role: "tool", tool_call_id: item.call.id, content: item.result.output });
     }
   }
 
@@ -321,6 +334,7 @@ async function runResponsesLoop(
   prompt: string,
   options: AgentOptions,
   session: { manager: SessionManager; id: string } | null,
+  toolSessionId: string,
   previousResponseId?: string | null,
   imageUrls?: string[],
   fileIds?: string[],
@@ -470,37 +484,28 @@ async function runResponsesLoop(
 
       if (showOutput && textContent) process.stdout.write("\n");
 
+      const executed = await runLocalToolCalls(
+        functionCalls.map((fc: any) => ({
+          id: fc.call_id,
+          name: fc.name,
+          arguments: fc.arguments,
+        })),
+        {
+          config,
+          cwd,
+          verbose: options.verbose,
+          showToolCalls: config.showToolCalls && !jsonMode,
+          session,
+          sessionId: toolSessionId,
+        },
+      );
+
       const toolOutputs: any[] = [];
-      for (const fc of functionCalls) {
-        emitToolCall(fc.name, fc.arguments, fc.call_id);
-        if (config.showToolCalls && !jsonMode) {
-          console.error(formatToolCall(fc.name, fc.arguments, options.verbose));
-        }
-
-        const approved = await checkApproval(config, fc.name, fc.arguments);
-        if (!approved) {
-          toolOutputs.push({ type: "function_call_output", call_id: fc.call_id, output: "Denied by user." });
-          continue;
-        }
-
-        runHooks(config.hooks, { type: "pre-tool", tool: fc.name, args: fc.arguments, sessionId: session?.id });
-        const result = await executeTool(fc.name, fc.arguments, cwd, {
-          sandboxMode: config.sandboxMode,
-        });
-        if (config.showToolCalls && !jsonMode) {
-          console.error(formatToolResult(result.output, result.error || false));
-        }
-        runHooks(config.hooks, { type: "post-tool", tool: fc.name, output: result.output, error: result.error, sessionId: session?.id });
-        emitToolResult(fc.call_id, result.output, result.error || false);
-
-        if (session) {
-          session.manager.appendToolExec(session.id, fc.name, fc.arguments, result.output, result.error || false);
-          session.manager.appendMessage(session.id, "tool", result.output, { toolCallId: fc.call_id });
-        }
+      for (const item of executed) {
         toolOutputs.push({
           type: "function_call_output",
-          call_id: fc.call_id,
-          output: result.output,
+          call_id: item.call.id,
+          output: item.result.output,
         });
       }
 
@@ -528,7 +533,7 @@ async function runResponsesLoop(
           { role: "system", content: buildSystemPrompt(cwd, config) },
           { role: "user", content: prompt },
         ];
-        return runChatLoop(config, msgs, options, session);
+        return runChatLoop(config, msgs, options, session, toolSessionId);
       }
       throw err;
     }
@@ -577,6 +582,7 @@ export async function runAgent(
   prompt: string,
   options: AgentOptions,
 ): Promise<string> {
+  const rawPrompt = prompt;
   const sessionMgr = config.ephemeral ? null : new SessionManager(config.sessionDir);
   let sessionCtx: { manager: SessionManager; id: string } | null = null;
   let runtimeSessionId = `ephemeral-${Date.now().toString(36)}`;
@@ -589,13 +595,13 @@ export async function runAgent(
       const meta = sessionMgr.createSession({
         model: config.model,
         cwd: options.cwd,
-        name: options.sessionName || sessionMgr.autoName(prompt),
+        name: options.sessionName || sessionMgr.autoName(rawPrompt),
       });
       sessionCtx = { manager: sessionMgr, id: meta.id };
       if (!isJsonMode()) console.error(chalk.dim(`Session: ${meta.id}`));
     }
     runtimeSessionId = sessionCtx.id;
-    sessionMgr.appendMessage(sessionCtx.id, "user", prompt);
+    sessionMgr.appendMessage(sessionCtx.id, "user", rawPrompt);
   } else {
     if (options.sessionId && !isJsonMode()) {
       console.error(chalk.dim("(ephemeral mode ignores --resume/--fork state)"));
@@ -607,6 +613,8 @@ export async function runAgent(
   emitSessionStarted(runtimeSessionId, config.model);
 
   try {
+    const requestPrompt = await preparePromptForTurn(config, options.cwd, rawPrompt, options.verbose);
+
     // Resolve image inputs
     const imageUrls: string[] = [];
     for (const img of config.imageInputs) {
@@ -632,7 +640,16 @@ export async function runAgent(
         const loaded = sessionMgr.loadSession(options.sessionId);
         if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
       }
-      return await runResponsesLoop(config, prompt, options, sessionCtx, prevResponseId, imageUrls, fileIds);
+      return await runResponsesLoop(
+        config,
+        requestPrompt,
+        options,
+        sessionCtx,
+        runtimeSessionId,
+        prevResponseId,
+        imageUrls,
+        fileIds,
+      );
     }
 
     // Default: chat.completions
@@ -655,13 +672,13 @@ export async function runAgent(
 
     // Add image to user message if present
     if (imageUrls.length > 0) {
-      const content = buildImageMessageContent(imageUrls[0], prompt);
+      const content = buildImageMessageContent(imageUrls[0], requestPrompt);
       messages.push({ role: "user", content } as any);
     } else {
-      messages.push({ role: "user", content: prompt });
+      messages.push({ role: "user", content: requestPrompt });
     }
 
-    return await runChatLoop(config, messages, options, sessionCtx);
+    return await runChatLoop(config, messages, options, sessionCtx, runtimeSessionId);
   } finally {
     runHooks(config.hooks, { type: "session-end", sessionId: runtimeSessionId });
     emitSessionCompleted(runtimeSessionId);
@@ -849,7 +866,8 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
         sessionMgr.updateMeta(meta.meta.id, { name: sessionMgr.autoName(input) });
       }
 
-      conversationMessages.push({ role: "user", content: input });
+      const requestInput = await preparePromptForTurn(config, options.cwd, input, options.verbose);
+      conversationMessages.push({ role: "user", content: requestInput });
       if (sessionId && sessionMgr) sessionMgr.appendMessage(sessionId, "user", input);
 
       try {
@@ -920,29 +938,21 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
 
           if (showOutput && acc.content) process.stdout.write("\n");
 
-          for (const tc of serialized) {
-            emitToolCall(tc.name, tc.arguments, tc.id);
-            if (config.showToolCalls) console.error(formatToolCall(tc.name, tc.arguments, options.verbose));
+          const executed = await runLocalToolCalls(serialized, {
+            config,
+            cwd: options.cwd,
+            verbose: options.verbose,
+            showToolCalls: config.showToolCalls,
+            session: sessionId && sessionMgr ? { manager: sessionMgr, id: sessionId } : null,
+            sessionId: sessionId || hookSessionId,
+          });
 
-            const approved = await checkApproval(config, tc.name, tc.arguments);
-            if (!approved) {
-              conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: "Tool execution denied by user." });
-              continue;
-            }
-
-            runHooks(config.hooks, { type: "pre-tool", tool: tc.name, args: tc.arguments, sessionId: sessionId || hookSessionId });
-            const result = await executeTool(tc.name, tc.arguments, options.cwd, {
-              sandboxMode: config.sandboxMode,
+          for (const item of executed) {
+            conversationMessages.push({
+              role: "tool",
+              tool_call_id: item.call.id,
+              content: item.result.output,
             });
-            if (config.showToolCalls) console.error(formatToolResult(result.output, result.error || false));
-            runHooks(config.hooks, { type: "post-tool", tool: tc.name, args: tc.arguments, output: result.output, error: result.error, sessionId: sessionId || hookSessionId });
-            emitToolResult(tc.id, result.output, result.error || false);
-
-            if (sessionId && sessionMgr) {
-              sessionMgr.appendToolExec(sessionId, tc.name, tc.arguments, result.output, result.error || false);
-              sessionMgr.appendMessage(sessionId, "tool", result.output, { toolCallId: tc.id });
-            }
-            conversationMessages.push({ role: "tool", tool_call_id: tc.id, content: result.output });
           }
         }
       } catch (err: any) {

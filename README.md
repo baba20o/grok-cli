@@ -5,15 +5,16 @@
 
 A coding assistant CLI powered by xAI's Grok models.
 
-`grok-agent` gives you an agentic assistant in your terminal that can chat, inspect and edit code, run shell commands, search a repo, attach files/images, use xAI server-side tools, and keep JSONL-backed session history.
+`grok-agent` gives you an agentic assistant in your terminal that can chat, inspect and edit code, run shell commands, search a repo, attach files/images, use xAI server-side tools, keep JSONL-backed session history, and store persistent long-term memory.
 
 ## Features
 
 - Exec mode: `grok-agent "fix the bug in utils.ts"`
 - Interactive REPL: `grok-agent`
 - Pipe mode: `git diff | grok-agent "review this patch"`
-- Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`
+- Local tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_directory`, `ask_user_question`, `lsp`, `tool_search`, `memory_search`, `remember_memory`, `forget_memory`
 - Session persistence with resume, fork, archive, rename, rollback, and compaction
+- Persistent memory with project/user scopes, markdown files, `MEMORY.md` indexes, and automatic recall
 - Ephemeral mode for no-history runs
 - JSONL output mode for automation
 - xAI server-side tools: web search, X search, code execution, file search, and MCP
@@ -119,6 +120,7 @@ grok-agent --help
 | Command | Description |
 |---|---|
 | `models` | List models or inspect a specific model |
+| `memory` | List, search, show, save, and delete persistent long-term memory |
 | `sessions` | List, show, archive, rename, rollback, compact, delete, or clear saved sessions |
 | `review` | Run Grok in code review mode for local changes, branches, or commits |
 | `generate-image` / `imagine` | Generate images |
@@ -137,6 +139,12 @@ Examples:
 ```bash
 grok-agent models ls
 grok-agent models info grok-4-1-fast-reasoning
+
+grok-agent memory list
+grok-agent memory remember "Testing preference" --description "Prefer Vitest" --body "Prefer Vitest for new tests in this repository."
+grok-agent memory search vitest
+grok-agent memory show project:testing-preference.md
+grok-agent memory forget project:testing-preference.md
 
 grok-agent sessions list
 grok-agent sessions show <id>
@@ -266,6 +274,31 @@ grok-agent --json-schema '{"type":"object","properties":{"files":{"type":"array"
 grok-agent --json --ephemeral "say hi in one short sentence"
 ```
 
+JSON mode emits one event per line on stdout. Memory-enabled runs can emit `memory.recalled` before the main turn when stored context is injected.
+
+### Memory
+
+```bash
+grok-agent memory remember "CLI output preference" \
+  --scope user \
+  --type feedback \
+  --description "Keep responses concise" \
+  --body "Prefer concise, direct close-outs unless I ask for detail."
+
+grok-agent memory list --scope all
+grok-agent memory search concise
+grok-agent memory show user:cli-output-preference.md
+
+grok-agent --json --ephemeral "What response style should you prefer here?"
+```
+
+Memory is stored under your CLI data dir:
+
+- `GROK_SESSION_DIR/memory/user`
+- `GROK_SESSION_DIR/memory/projects/<project-slug>`
+
+Each scope keeps a `MEMORY.md` index plus individual markdown files with frontmatter. New user turns automatically recall the most relevant memories. When semantic recall is enabled, Grok uses a fast side query to pick the strongest candidates and falls back to heuristic matching if that selection step fails.
+
 ### Collections
 
 ```bash
@@ -300,7 +333,7 @@ grok-agent tokenize -m grok-code-fast-1 "class User { constructor() {} }"
 Sessions are stored as JSONL files under:
 
 - `GROK_SESSION_DIR/sessions`
-- or `~/.grok-agent/sessions` by default
+- or `~/.grok-cli/sessions` by default
 
 Useful commands:
 
@@ -332,7 +365,7 @@ Create a starter config file:
 grok-agent config --init
 ```
 
-That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok-agent`).
+That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok-cli`).
 
 Supported config fields currently include:
 
@@ -380,6 +413,14 @@ Supported config fields currently include:
       "includeResults": true
     }
   ],
+  "memory": {
+    "enabled": true,
+    "auto_recall": true,
+    "use_semantic_recall": true,
+    "recall_limit": 3,
+    "selector_model": "grok-4-1-fast-reasoning",
+    "default_scope": "project"
+  },
   "hooks": {
     "pre-tool": ["echo pre"],
     "post-tool": ["echo post"]
@@ -396,8 +437,11 @@ Environment variables:
 | `XAI_BASE_URL` | API base URL | `https://api.x.ai/v1` |
 | `XAI_MANAGEMENT_BASE_URL` | management API base URL | `https://management-api.x.ai/v1` |
 | `GROK_MODEL` | default model | `grok-4-1-fast-reasoning` |
-| `GROK_SESSION_DIR` | base dir for sessions and config | `~/.grok-agent` |
+| `GROK_SESSION_DIR` | base dir for sessions, config, and memory | `~/.grok-cli` |
 | `GROK_SANDBOX_MODE` | default sandbox mode | `danger-full-access` |
+| `GROK_MEMORY_ENABLED` | enable or disable persistent memory | `true` |
+| `GROK_MEMORY_AUTO_RECALL` | automatically inject relevant memory on new turns | `true` |
+| `GROK_MEMORY_SELECTOR_MODEL` | fast model used for semantic memory selection | `grok-4-1-fast-reasoning` |
 
 ## Tools
 
@@ -406,6 +450,12 @@ Environment variables:
 | Tool | Description |
 |---|---|
 | `bash` | Run shell commands |
+| `ask_user_question` | Ask focused multiple-choice questions when a small clarification will unblock the task |
+| `lsp` | TypeScript/JavaScript semantic navigation: definitions, references, hover, and symbols |
+| `tool_search` | Discover the right local tool by capability instead of guessing names |
+| `memory_search` | Search persistent long-term memory |
+| `remember_memory` | Save long-term memory for future sessions |
+| `forget_memory` | Delete stale or incorrect memory |
 | `read_file` | Read file contents |
 | `write_file` | Create or overwrite files |
 | `edit_file` | Exact find-and-replace edits |
