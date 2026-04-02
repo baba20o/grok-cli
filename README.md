@@ -86,6 +86,7 @@ Key options:
 - `--research-depth <level>`: multi-agent depth (`quick`, `balanced`, `deep`, `max`)
 - `--agent-count <n>`: coarse multi-agent size control (`4` or `16`)
 - `--research-verbose-streaming`, `--research-encrypted-content`: opt into extra multi-agent response payloads when supported
+- `--conv-id <id>`: override the prompt-cache conversation key for stateless/scripted runs
 - `--max-turns <n>`: cap agent turns
 - `--cwd <dir>`: change working directory
 - `-r, --resume <id>`: resume a saved session
@@ -120,6 +121,8 @@ Full help:
 ```bash
 grok-agent --help
 ```
+
+Prompt cache routing is automatic for saved sessions, resumed sessions, interactive REPLs, and ephemeral single runs. If you want multiple stateless invocations to reuse the same cache route, pass `--conv-id <id>` or set `GROK_CONV_ID`.
 
 ## Commands
 

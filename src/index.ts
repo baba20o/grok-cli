@@ -128,6 +128,7 @@ program
   .option("--agent-count <count>", "Multi-agent agent count: 4 or 16")
   .option("--research-verbose-streaming", "Request verbose multi-agent research traces when supported")
   .option("--research-encrypted-content", "Preserve encrypted multi-agent state in responses when supported")
+  .option("--conv-id <id>", "Override the prompt-cache conversation key")
   .option("-v, --verbose", "Detailed tool call output", false)
   .option("--show-reasoning", "Show thinking tokens", false)
   .option("--show-usage", "Show token usage and cost", false)
@@ -276,6 +277,7 @@ program
       ephemeral: hasCliValue("ephemeral") ? opts.ephemeral || false : undefined,
       outputFile: hasCliValue("output") ? opts.output || null : undefined,
       color: hasCliValue("color") ? opts.color || "auto" : undefined,
+      convId: hasCliValue("convId") ? opts.convId || null : undefined,
       researchVerboseStreaming:
         hasCliValue("researchVerboseStreaming") ? !!opts.researchVerboseStreaming : undefined,
       useEncryptedContent:
@@ -1568,6 +1570,7 @@ program.command("config").description("Show or edit configuration")
         show_server_tool_usage: false,
         include_tool_outputs: false,
         notify: false,
+        conv_id: null,
         max_turns: 50,
         management_base_url: "https://management-api.x.ai/v1",
         mcp_servers: [],
@@ -1600,6 +1603,7 @@ program.command("config").description("Show or edit configuration")
     console.log(chalk.dim(`Show server tool usage: ${config.showServerToolUsage}`));
     console.log(chalk.dim(`Include tool outputs: ${config.includeToolOutputs}`));
     console.log(chalk.dim(`Notify: ${config.notify}`));
+    console.log(chalk.dim(`Prompt cache key: ${config.convId || "auto per session/ephemeral run"}`));
     console.log(chalk.dim(`Max turns: ${config.maxToolRounds}`));
     console.log(chalk.dim(`Memory enabled: ${config.memory.enabled}`));
     console.log(chalk.dim(`Memory auto recall: ${config.memory.autoRecall}`));

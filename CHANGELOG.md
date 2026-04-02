@@ -8,6 +8,7 @@ All notable changes to grok-agent will be documented in this file.
 
 - Multi-agent research now forces the Responses API, exposes research depth/agent-count controls, and can request encrypted-content or verbose-streaming payloads when supported.
 - The multi-agent model now omits unsupported local client tools and uses only built-in server tools plus remote MCP.
+- Prompt cache routing now works end-to-end: saved sessions and ephemeral runs get stable cache keys automatically, Responses requests send `prompt_cache_key`, and `--conv-id` / `GROK_CONV_ID` can pin routing for stateless scripts.
 
 ## [0.7.0] - 2026-04-01
 

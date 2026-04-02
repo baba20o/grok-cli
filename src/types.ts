@@ -235,6 +235,7 @@ export interface Citation {
 
 export interface ConfigFile {
   model?: string;
+  conv_id?: string;
   approval_policy?: ApprovalPolicy;
   sandbox_mode?: SandboxMode;
   reasoning_effort?: ReasoningEffort;

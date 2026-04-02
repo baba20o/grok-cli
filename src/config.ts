@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { isMultiAgentModel, normalizeReasoningEffort } from "./model-capabilities.js";
 import { normalizeServerTools } from "./server-tools.js";
+import { getPromptCacheKey } from "./prompt-cache.js";
 import type {
   ConfigFile,
   GrokConfig,
@@ -251,7 +252,15 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
       overrides.includeToolOutputs ?? fileConfig.include_tool_outputs ?? false,
     notify: overrides.notify ?? fileConfig.notify ?? false,
     hooks: overrides.hooks || fileConfig.hooks || {},
-    convId: overrides.convId || null,
+    convId: getPromptCacheKey(
+      {
+        convId:
+          overrides.convId ||
+          fileConfig.conv_id ||
+          process.env.GROK_CONV_ID ||
+          null,
+      } as Pick<GrokConfig, "convId">,
+    ),
     jsonOutput,
     ephemeral: overrides.ephemeral ?? false,
     outputFile: overrides.outputFile || null,

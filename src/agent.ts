@@ -23,6 +23,7 @@ import { runHooks } from "./hooks.js";
 import { needsCompaction, compactConversation } from "./compaction.js";
 import { formatApiError } from "./cli-errors.js";
 import { collectResponseIncludes, serializeServerTools } from "./server-tools.js";
+import { withPromptCacheKey } from "./prompt-cache.js";
 import { runLocalToolCalls } from "./tool-runner.js";
 import {
   extractCitationsFromContent,
@@ -403,6 +404,7 @@ async function runResponsesLoop(
       }
       if (responseIncludes.length > 0) reqParams.include = responseIncludes;
       if (currentResponseId) reqParams.previous_response_id = currentResponseId;
+      if (config.convId) reqParams.prompt_cache_key = config.convId;
       if (multiAgentModel) {
         reqParams.reasoning = { effort: config.reasoningEffort };
         if (config.useEncryptedContent) {
@@ -625,11 +627,12 @@ export async function runAgent(
   emitSessionStarted(runtimeSessionId, config.model);
 
   try {
-    const requestPrompt = await preparePromptForTurn(config, options.cwd, rawPrompt, options.verbose);
+    const runtimeConfig = withPromptCacheKey(config, runtimeSessionId);
+    const requestPrompt = await preparePromptForTurn(runtimeConfig, options.cwd, rawPrompt, options.verbose);
 
     // Resolve image inputs
     const imageUrls: string[] = [];
-    for (const img of config.imageInputs) {
+    for (const img of runtimeConfig.imageInputs) {
       try {
         imageUrls.push(getImageDataUrl(img, options.cwd));
       } catch (err: any) {
@@ -638,12 +641,12 @@ export async function runAgent(
     }
 
     // Upload files if any
-    const fileIds = await uploadFiles(config, options.cwd);
+    const fileIds = await uploadFiles(runtimeConfig, options.cwd);
 
     // Determine API mode
-    const useResponses = config.useResponsesApi ||
-      config.mcpServers.length > 0 ||
-      config.serverTools.length > 0 ||
+    const useResponses = runtimeConfig.useResponsesApi ||
+      runtimeConfig.mcpServers.length > 0 ||
+      runtimeConfig.serverTools.length > 0 ||
       fileIds.length > 0;
 
     if (useResponses) {
@@ -653,7 +656,7 @@ export async function runAgent(
         if (loaded?.meta.lastResponseId) prevResponseId = loaded.meta.lastResponseId;
       }
       return await runResponsesLoop(
-        config,
+        runtimeConfig,
         requestPrompt,
         options,
         sessionCtx,
@@ -673,12 +676,12 @@ export async function runAgent(
         messages = loaded.messages;
         console.error(chalk.dim(`Resumed session with ${loaded.messages.length} messages`));
       } else {
-        messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+        messages = [{ role: "system", content: buildSystemPrompt(options.cwd, runtimeConfig) }];
       }
     } else {
-      messages = [{ role: "system", content: buildSystemPrompt(options.cwd, config) }];
+      messages = [{ role: "system", content: buildSystemPrompt(options.cwd, runtimeConfig) }];
       if (sessionCtx) {
-        sessionCtx.manager.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, config));
+        sessionCtx.manager.appendMessage(sessionCtx.id, "system", buildSystemPrompt(options.cwd, runtimeConfig));
       }
     }
 
@@ -690,7 +693,7 @@ export async function runAgent(
       messages.push({ role: "user", content: requestPrompt });
     }
 
-    return await runChatLoop(config, messages, options, sessionCtx, runtimeSessionId);
+    return await runChatLoop(runtimeConfig, messages, options, sessionCtx, runtimeSessionId);
   } finally {
     runHooks(config.hooks, { type: "session-end", sessionId: runtimeSessionId });
     emitSessionCompleted(runtimeSessionId);
@@ -890,7 +893,8 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
         sessionMgr.updateMeta(meta.meta.id, { name: sessionMgr.autoName(input) });
       }
 
-      const requestInput = await preparePromptForTurn(config, options.cwd, input, options.verbose);
+      const turnConfig = withPromptCacheKey({ ...config, model: activeModel }, hookSessionId);
+      const requestInput = await preparePromptForTurn(turnConfig, options.cwd, input, options.verbose);
       conversationMessages.push({ role: "user", content: requestInput });
       if (sessionId && sessionMgr) sessionMgr.appendMessage(sessionId, "user", input);
 
@@ -901,18 +905,19 @@ export async function runInteractive(config: GrokConfig, options: AgentOptions):
           emitTurnStarted(turn);
 
           if (turn > 1 && needsCompaction(conversationMessages)) {
-            conversationMessages = await compactConversation(config, conversationMessages);
+            conversationMessages = await compactConversation(turnConfig, conversationMessages);
           }
 
           const acc = createAccumulator();
           const turnUsage = createUsageStats();
-          const client = createClient(config);
+          const client = createClient(turnConfig);
 
           const stream = await client.chat.completions.create({
             model: activeModel,
             messages: conversationMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
             stream: true,
+            stream_options: { include_usage: true },
             max_tokens: config.maxTokens,
             temperature: 0,
           } as any);
