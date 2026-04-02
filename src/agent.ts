@@ -8,6 +8,7 @@ import {
   createAccumulator,
   processChunk,
 } from "./stream.js";
+import { isMultiAgentModel, supportsClientTools } from "./model-capabilities.js";
 import { SessionManager } from "./session.js";
 import { getImageDataUrl, buildImageMessageContent, buildImageInputContent } from "./image.js";
 import {
@@ -349,9 +350,10 @@ async function runResponsesLoop(
   setMaxOutputTokens(config.maxOutputTokens);
 
   // Build tools array
+  const multiAgentModel = isMultiAgentModel(config.model);
   const tools: any[] = [
     ...serializeServerTools(config.serverTools, config.mcpServers),
-    ...serializeClientToolDefinitions(toolDefinitions),
+    ...(supportsClientTools(config.model) ? serializeClientToolDefinitions(toolDefinitions) : []),
   ];
 
   // Build input content
@@ -396,8 +398,17 @@ async function runResponsesLoop(
         store: true,
       };
       const responseIncludes = collectResponseIncludes(config.serverTools, config.includeToolOutputs);
+      if (multiAgentModel && config.researchVerboseStreaming) {
+        responseIncludes.push("verbose_streaming");
+      }
       if (responseIncludes.length > 0) reqParams.include = responseIncludes;
       if (currentResponseId) reqParams.previous_response_id = currentResponseId;
+      if (multiAgentModel) {
+        reqParams.reasoning = { effort: config.reasoningEffort };
+        if (config.useEncryptedContent) {
+          reqParams.use_encrypted_content = true;
+        }
+      }
       if (config.jsonSchema) {
         try {
           reqParams.text = {

@@ -66,6 +66,8 @@ export interface MemoryRecallResult {
   strategy: "heuristic" | "semantic";
 }
 
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
 export interface GrokConfig {
   apiKey: string;
   managementApiKey: string;
@@ -74,7 +76,7 @@ export interface GrokConfig {
   model: string;
   maxTokens: number;
   timeout: number;
-  reasoningEffort: "low" | "high";
+  reasoningEffort: ReasoningEffort;
   showReasoning: boolean;
   showToolCalls: boolean;
   showUsage: boolean;
@@ -101,6 +103,8 @@ export interface GrokConfig {
   outputFile: string | null;
   color: "auto" | "always" | "never";
   maxOutputTokens: number;
+  researchVerboseStreaming: boolean;
+  useEncryptedContent: boolean;
   memory: MemorySettings;
 }
 
@@ -233,6 +237,7 @@ export interface ConfigFile {
   model?: string;
   approval_policy?: ApprovalPolicy;
   sandbox_mode?: SandboxMode;
+  reasoning_effort?: ReasoningEffort;
   show_reasoning?: boolean;
   show_usage?: boolean;
   show_diffs?: boolean;
@@ -246,6 +251,8 @@ export interface ConfigFile {
   hooks?: HooksConfig;
   tool_approvals?: ToolApprovalSettings;
   include_tool_outputs?: boolean;
+  research_verbose_streaming?: boolean;
+  use_encrypted_content?: boolean;
   server_tools?: Array<ServerToolKind | ServerToolConfig>;
   memory?: {
     enabled?: boolean;

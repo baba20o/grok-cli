@@ -9,6 +9,11 @@ import { runAgent, runInteractive } from "./agent.js";
 import { SessionManager } from "./session.js";
 import { createClient } from "./client.js";
 import {
+  isMultiAgentModel,
+  reasoningEffortFromAgentCount,
+  reasoningEffortFromResearchDepth,
+} from "./model-capabilities.js";
+import {
   formatApiError,
   formatSessionDirError,
   getResponseErrorMessage,
@@ -119,6 +124,10 @@ program
   .option("--non-reasoning", "grok-4.20-non-reasoning")
   .option("--code", "grok-code-fast-1 (4x faster coding model)")
   .option("--research", "Multi-agent deep research (4-16 agents)")
+  .option("--research-depth <level>", "Multi-agent research depth: quick, balanced, deep, max")
+  .option("--agent-count <count>", "Multi-agent agent count: 4 or 16")
+  .option("--research-verbose-streaming", "Request verbose multi-agent research traces when supported")
+  .option("--research-encrypted-content", "Preserve encrypted multi-agent state in responses when supported")
   .option("-v, --verbose", "Detailed tool call output", false)
   .option("--show-reasoning", "Show thinking tokens", false)
   .option("--show-usage", "Show token usage and cost", false)
@@ -181,6 +190,44 @@ program
     if (opts.code) model = MODELS.code;
     if (opts.research) model = MODELS.multiAgent;
 
+    const wantsResearchFeatures =
+      !!opts.research ||
+      hasCliValue("researchDepth") ||
+      hasCliValue("agentCount") ||
+      hasCliValue("researchVerboseStreaming") ||
+      hasCliValue("researchEncryptedContent");
+
+    if (wantsResearchFeatures && !model) {
+      model = MODELS.multiAgent;
+    }
+    if (wantsResearchFeatures && model && !isMultiAgentModel(model)) {
+      console.error(chalk.red("Multi-agent research flags require the grok-4.20-multi-agent model."));
+      process.exit(1);
+    }
+    if (hasCliValue("researchDepth") && hasCliValue("agentCount")) {
+      console.error(chalk.red("Use either --research-depth or --agent-count, not both."));
+      process.exit(1);
+    }
+
+    let reasoningEffort: GrokConfig["reasoningEffort"] | undefined = undefined;
+    if (hasCliValue("researchDepth")) {
+      const resolvedResearchDepth = reasoningEffortFromResearchDepth(opts.researchDepth);
+      if (!resolvedResearchDepth) {
+        console.error(chalk.red(`Invalid research depth: ${opts.researchDepth}`));
+        console.error(chalk.dim("Use one of: quick, balanced, deep, max"));
+        process.exit(1);
+      }
+      reasoningEffort = resolvedResearchDepth;
+    } else if (hasCliValue("agentCount")) {
+      const resolvedAgentCount = reasoningEffortFromAgentCount(opts.agentCount);
+      if (!resolvedAgentCount) {
+        console.error(chalk.red(`Invalid agent count: ${opts.agentCount}`));
+        console.error(chalk.dim("Use one of: 4, 16"));
+        process.exit(1);
+      }
+      reasoningEffort = resolvedAgentCount;
+    }
+
     const maxTurns = hasCliValue("maxTurns") ? parseInt(opts.maxTurns, 10) : undefined;
     const serverTools = buildServerToolsFromOptions(opts);
     const mcpServers = parseMcpServers(opts);
@@ -209,10 +256,12 @@ program
       showServerToolUsage:
         hasCliValue("showServerToolUsage") ? opts.showServerToolUsage : undefined,
       maxToolRounds: maxTurns,
+      reasoningEffort,
       serverTools,
       mcpServers,
       useResponsesApi:
         opts.responsesApi ||
+        isMultiAgentModel(model) ||
         serverTools.length > 0 ||
         mcpServers.length > 0,
       imageInputs: opts.image || [],
@@ -227,6 +276,10 @@ program
       ephemeral: hasCliValue("ephemeral") ? opts.ephemeral || false : undefined,
       outputFile: hasCliValue("output") ? opts.output || null : undefined,
       color: hasCliValue("color") ? opts.color || "auto" : undefined,
+      researchVerboseStreaming:
+        hasCliValue("researchVerboseStreaming") ? !!opts.researchVerboseStreaming : undefined,
+      useEncryptedContent:
+        hasCliValue("researchEncryptedContent") ? !!opts.researchEncryptedContent : undefined,
     });
 
     setShowDiffs(config.showDiffs);

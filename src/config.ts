@@ -2,12 +2,14 @@ import { config as loadEnv } from "dotenv";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { isMultiAgentModel, normalizeReasoningEffort } from "./model-capabilities.js";
 import { normalizeServerTools } from "./server-tools.js";
 import type {
   ConfigFile,
   GrokConfig,
   McpServer,
   MemoryScope,
+  ReasoningEffort,
   SandboxMode,
   ServerToolConfig,
   ServerToolKind,
@@ -161,9 +163,17 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     overrides.serverTools as Array<ServerToolKind | ServerToolConfig> | undefined,
   );
   const serverTools = normalizeServerTools([...fileServerTools, ...overrideServerTools]);
+  const model = overrides.model || fileConfig.model || process.env.GROK_MODEL || MODELS.default;
+  const reasoningEffort = normalizeReasoningEffort(
+    overrides.reasoningEffort ||
+      fileConfig.reasoning_effort ||
+      process.env.GROK_REASONING_EFFORT,
+    "high",
+  );
 
   const needsResponsesApi =
     overrides.useResponsesApi ||
+    isMultiAgentModel(model) ||
     serverTools.length > 0 ||
     mcpServers.length > 0 ||
     (overrides.fileAttachments && overrides.fileAttachments.length > 0);
@@ -209,10 +219,10 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     baseUrl: overrides.baseUrl || process.env.XAI_BASE_URL || "https://api.x.ai/v1",
     managementBaseUrl:
       overrides.managementBaseUrl || fileConfig.management_base_url || getManagementBaseUrl(),
-    model: overrides.model || fileConfig.model || process.env.GROK_MODEL || MODELS.default,
+    model,
     maxTokens: overrides.maxTokens || 16384,
     timeout: overrides.timeout || 600_000,
-    reasoningEffort: overrides.reasoningEffort || "high",
+    reasoningEffort,
     showReasoning: overrides.showReasoning ?? fileConfig.show_reasoning ?? false,
     showToolCalls: jsonOutput ? false : (overrides.showToolCalls ?? true),
     showUsage: overrides.showUsage ?? fileConfig.show_usage ?? false,
@@ -247,6 +257,16 @@ export function getConfig(overrides: Partial<GrokConfig> = {}): GrokConfig {
     outputFile: overrides.outputFile || null,
     color: overrides.color || "auto",
     maxOutputTokens: overrides.maxOutputTokens || 8000,
+    researchVerboseStreaming:
+      overrides.researchVerboseStreaming ??
+      fileConfig.research_verbose_streaming ??
+      readEnvBoolean("GROK_RESEARCH_VERBOSE_STREAMING") ??
+      false,
+    useEncryptedContent:
+      overrides.useEncryptedContent ??
+      fileConfig.use_encrypted_content ??
+      readEnvBoolean("GROK_USE_ENCRYPTED_CONTENT") ??
+      false,
     memory,
   };
 }
