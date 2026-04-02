@@ -83,6 +83,9 @@ Key options:
 
 - `-m, --model <model>`: use any specific model id
 - `--fast`, `--reasoning`, `--non-reasoning`, `--code`, `--research`: model shortcuts
+- `--research-depth <level>`: multi-agent depth (`quick`, `balanced`, `deep`, `max`)
+- `--agent-count <n>`: coarse multi-agent size control (`4` or `16`)
+- `--research-verbose-streaming`, `--research-encrypted-content`: opt into extra multi-agent response payloads when supported
 - `--max-turns <n>`: cap agent turns
 - `--cwd <dir>`: change working directory
 - `-r, --resume <id>`: resume a saved session
@@ -253,12 +256,21 @@ Interactive mode also supports slash commands for session control and quick util
 
 ```bash
 grok-agent --research "compare React Server Components vs Astro Islands"
+grok-agent --research --research-depth quick "compare TCP and UDP"
+grok-agent --research --agent-count 16 "compare battery strategies across top EV makers"
 grok-agent --web-search "what changed in Node.js 22"
 grok-agent --x-search "what are developers saying about Bun"
 grok-agent --web-search --allow-domain docs.x.ai --search-images "summarize the docs homepage"
 grok-agent --x-search --x-allow xai --x-from 2026-03-01 --x-to 2026-03-29 "recent Grok platform updates"
 grok-agent --collection engineering-handbook --collection-filter 'team = "platform"' "find the deploy checklist"
 ```
+
+Multi-agent research notes:
+
+- The multi-agent model always uses the Responses API.
+- `--research-depth` maps to xAI reasoning effort: `quick=low`, `balanced=medium`, `deep=high`, `max=xhigh`.
+- `--agent-count 4` maps to `medium`; `--agent-count 16` maps to `high`.
+- Built-in tools and remote MCP are supported with the multi-agent model. Local client tools are disabled for that model variant.
 
 ### Images and Files
 

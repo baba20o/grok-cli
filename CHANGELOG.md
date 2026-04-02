@@ -4,6 +4,11 @@ All notable changes to grok-agent will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Multi-agent research now forces the Responses API, exposes research depth/agent-count controls, and can request encrypted-content or verbose-streaming payloads when supported.
+- The multi-agent model now omits unsupported local client tools and uses only built-in server tools plus remote MCP.
+
 ## [0.7.0] - 2026-04-01
 
 ### Added
