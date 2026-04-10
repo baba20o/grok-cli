@@ -395,10 +395,6 @@ export const toolDefinitions: ToolDef[] = [
             type: "string",
             description: "Optional model override.",
           },
-          max_turns: {
-            type: "number",
-            description: "Maximum turns for the subagent (default 15, max 30).",
-          },
           task_id: {
             type: "string",
             description: "Optional session task id to claim while running.",

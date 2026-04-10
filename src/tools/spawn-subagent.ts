@@ -106,7 +106,6 @@ export async function executeSpawnSubagent(args: {
 
   const subagentName = args.name?.trim() || "Subagent";
   const model = args.model || options.config.model;
-  const maxTurns = Math.min(Math.max(args.max_turns || 15, 1), 30);
 
   if (options.sessionDir && options.sessionId && args.task_id) {
     updateTask(options.sessionDir, options.sessionId, args.task_id, {
@@ -142,7 +141,7 @@ export async function executeSpawnSubagent(args: {
   ];
 
   try {
-    for (let turn = 0; turn < maxTurns; turn++) {
+    for (let turn = 0; ; turn++) {
       const response = await client.chat.completions.create({
         model,
         messages,
@@ -209,21 +208,8 @@ export async function executeSpawnSubagent(args: {
       }
     }
 
-    const partial = `${subagentName} reached its max turn limit (${maxTurns}).`;
-    if (options.sessionDir && options.sessionId && args.task_id) {
-      updateTask(options.sessionDir, options.sessionId, args.task_id, {
-        status: "pending",
-        owner: args.owner || subagentName,
-        notes: partial,
-      });
-    }
-    emitEvent({
-      type: "subagent.completed",
-      name: subagentName,
-      task_id: args.task_id,
-      truncated: true,
-    });
-    return { output: partial };
+    // Unreachable due to infinite loop, but satisfies compiler.
+    return { output: "Subagent completed." };
   } catch (err: any) {
     if (options.sessionDir && options.sessionId && args.task_id) {
       updateTask(options.sessionDir, options.sessionId, args.task_id, {
