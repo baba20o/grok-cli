@@ -1,6 +1,6 @@
 {
   "name": "grok-agent",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A coding assistant CLI powered by xAI's Grok models",
   "type": "module",
   "main": "./dist/index.js",
