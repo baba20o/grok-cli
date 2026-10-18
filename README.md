@@ -213,6 +213,8 @@ Selection precedence is:
 
 `CLI flag` > `config.json` > `GROK_MODEL` > built-in default
 
+Note that `grok-agent config --init` writes a `model` entry into the starter `config.json`, so once that file exists `GROK_MODEL` has no effect until you change or remove the `model` field.
+
 Current built-in aliases:
 
 | Flag | Model |
@@ -442,7 +444,9 @@ Create a starter config file:
 grok-agent config --init
 ```
 
-That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok`).
+That writes `config.json` under your session dir (`GROK_SESSION_DIR` or `~/.grok`). If the file already exists, `--init` leaves it unchanged and prints `Config already exists`.
+
+The starter file sets explicit values for `model`, `approval_policy` (`always-approve`), `sandbox_mode` (`danger-full-access`), and the `memory` options. When a field is set in `config.json`, it takes precedence over the matching environment variable (`GROK_MODEL`, `GROK_SANDBOX_MODE`, `GROK_MEMORY_*`, `XAI_MANAGEMENT_API_KEY`, `XAI_MANAGEMENT_BASE_URL`, `GROK_CONV_ID`), so edit the file rather than exporting a variable for those settings. The starter `conv_id: null` counts as unset. CLI flags, where one exists for the setting, still override both. If `config.json` is not valid JSON, it is silently ignored and environment variables/built-in defaults apply; `grok-agent config` shows the effective values.
 
 Supported config fields currently include:
 
@@ -519,6 +523,12 @@ Environment variables:
 | `GROK_MEMORY_ENABLED` | enable or disable persistent memory | `true` |
 | `GROK_MEMORY_AUTO_RECALL` | automatically inject relevant memory on new turns | `true` |
 | `GROK_MEMORY_SELECTOR_MODEL` | fast model used for semantic memory selection | `grok-4-1-fast-reasoning` |
+| `GROK_MEMORY_SEMANTIC_RECALL` | use the selector model to rank recalled memories | `true` |
+| `GROK_MEMORY_RECALL_LIMIT` | maximum memories recalled per turn (values above 8 are capped at 8) | `3` |
+| `GROK_MEMORY_DEFAULT_SCOPE` | default scope for saved memory (`project` or `user`) | `project` |
+| `GROK_CONV_ID` | fixed prompt-cache conversation key | automatic |
+
+Defaults apply only when neither a CLI flag nor `config.json` sets the value (see [Configuration](#configuration)).
 
 ## Tools
 
